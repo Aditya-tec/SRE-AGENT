@@ -1,0 +1,19 @@
+name: keep-alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping all Render services
+        run: |
+          set -x
+          curl -sf --max-time 60 https://order-service-a.onrender.com/health
+          curl -sf --max-time 60 https://order-service-b.onrender.com/health
+          curl -sf --max-time 60 https://inventory-service.onrender.com/health
+          curl -sf --max-time 60 https://notification-service.onrender.com/health
+          curl -sf --max-time 60 https://control-plane.onrender.com/health
