@@ -1,25 +1,15 @@
-const express = require('express');
-const cors = require('cors');
+const { createApp } = require('./app');
 const poller = require('./poller');
 const trafficGenerator = require('./trafficGenerator');
-const incidentsRoute = require('./routes/incidents');
-const servicesRoute = require('./routes/services');
-const gatewayRoute = require('./routes/gateway');
-const breakItRoute = require('./routes/breakIt');
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', service: 'control-plane', uptimeSec: Math.floor(process.uptime()) });
+process.on('unhandledRejection', (err) => {
+  console.error('[control-plane] unhandled rejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[control-plane] uncaught exception:', err);
 });
 
-app.use(incidentsRoute);
-app.use(servicesRoute);
-app.use(gatewayRoute);
-app.use(breakItRoute);
-
+const app = createApp();
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`control-plane listening on port ${PORT}`);

@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: order-service
+            dir: services/order-service
+          - name: inventory-service
+            dir: services/inventory-service
+          - name: notification-service
+            dir: services/notification-service
+          - name: control-plane
+            dir: services/control-plane
+          - name: dashboard
+            dir: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.dir }}
+        run: npm ci
+
+      - name: Run tests
+        working-directory: ${{ matrix.dir }}
+        run: npm test
+
+      - name: Build
+        if: matrix.name == 'dashboard'
+        working-directory: ${{ matrix.dir }}
+        run: npm run build
+
+      - name: Audit dependencies (fail on high/critical)
+        working-directory: ${{ matrix.dir }}
+        run: npm audit --audit-level=high
+
+  validate-yaml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate render.yaml and workflow files parse as YAML
+        run: |
+          npx --yes js-yaml render.yaml > /dev/null
+          for f in .github/workflows/*.yml; do
+            npx --yes js-yaml "$f" > /dev/null
+          done

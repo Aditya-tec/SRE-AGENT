@@ -30,7 +30,10 @@ router.post('/break-it', async (req, res) => {
   try {
     await fetch(`${SERVICE_URLS[service]}/chaos`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.CHAOS_SECRET ? { 'x-chaos-secret': process.env.CHAOS_SECRET } : {}),
+      },
       body: JSON.stringify({ type: faultType, durationSec: DEFAULT_DURATION_SEC }),
     });
   } catch (err) {
