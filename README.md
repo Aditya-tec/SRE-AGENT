@@ -1,8 +1,89 @@
 # Autonomous SRE Agent
 
-A self-healing distributed system: three microservices simulating an e-commerce order flow, a control-plane agent that detects, diagnoses (via LLM), and auto-remediates incidents, and a live dashboard with both autonomous chaos and a manual "Break It" trigger.
+A fully free-tier, self-healing distributed system: three microservices simulating an e-commerce order flow, a control-plane agent that detects, diagnoses via an LLM, and auto-remediates incidents, and a live dashboard with both autonomous background chaos and a manual "Break It" trigger — deployed on Render, Vercel, and Supabase at zero cost.
 
-Full build plan lives in project notes. This README will be filled out in Phase 11 with the architecture diagram, live links, and demo instructions.
+**Live dashboard:** _not yet deployed — see [Deployment](#deployment) below. Once live, this line becomes the link and the invitation to click "Break It."_
+
+## Why this exists
+
+Most portfolio projects show "I can build a feature." This one shows what happens when production breaks and what it looks like to automate the response a senior SRE gives: detect the anomaly, reason about the likely root cause from telemetry (using an LLM for real diagnostic reasoning, not chat), take a whitelisted remediation action, verify it worked, and write the postmortem — with zero human intervention, but full visibility into every step.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Target["Target system"]
+        OA[order-service-a]
+        OB[order-service-b]
+        INV[inventory-service]
+        NOTIF[notification-service]
+    end
+
+    CP[control-plane] -->|poll /health, /metrics every 5s| Target
+    CP -->|gateway routes real traffic| OA
+    CP -->|gateway routes real traffic| OB
+    OA --> INV
+    OA --> NOTIF
+    OB --> INV
+    OB --> NOTIF
+    CP <-->|read/write incidents, metrics, services| DB[(Supabase Postgres)]
+    CP -->|diagnose + postmortem| LLM[Groq LLM]
+    CP -->|restart| Render[Render API]
+    DASH[Next.js dashboard] -->|GET /services, /incidents, POST /break-it| CP
+    GHA[GitHub Actions] -->|POST /break-it every ~2h| CP
+    GHA -->|GET /health every 10m| Target
+    GHA -->|GET /health every 10m| CP
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Healthy
+    Healthy --> Suspected: anomaly on 1 poll
+    Suspected --> Healthy: next poll healthy
+    Suspected --> Detected: anomaly persists 2 polls
+    Detected --> Diagnosing: insert incident row, call LLM
+    Diagnosing --> Remediating: root cause returned
+    Remediating --> Verifying: remediation action executed
+    Verifying --> Resolved: next 2 polls healthy
+    Verifying --> Remediating: still unhealthy, retry (max 3 attempts)
+    Verifying --> Unresolved: 3rd attempt still unhealthy
+    Resolved --> Healthy
+```
+
+## Tech stack
+
+| Layer | Choice | Why |
+| --- | --- | --- |
+| 3 target services + control plane | Node.js + Express | Minimal boilerplate for a handful of endpoints each; keeps the whole system in one language |
+| Dashboard | Next.js (App Router) + React + Tailwind | Fast to scaffold, server-side env vars for the control-plane URl |
+| Database | Supabase Postgres | Free tier, zero server setup, `@supabase/supabase-js` client |
+| LLM | Groq (`llama-3.3-70b-versatile`) | Free tier, fast inference — matters for a live "watch it diagnose" demo |
+| Hosting | Render (5 services) + Vercel (dashboard) | Genuinely free web services with no card, Git-connected auto-deploy, a REST API for programmatic restarts |
+| Scheduling | GitHub Actions | Free cron for keep-alive pings and autonomous chaos injection |
+
+## Safety guardrails
+
+Every remediation action runs through a whitelist, never free-form LLM-executed commands:
+
+- **Audit trail first.** `remediation_action` is written to the incident row *before* the action executes, so there's a record even if the action itself fails.
+- **Hard attempt cap.** Max 3 remediation attempts per incident. After that, the incident is marked `remediation_success = false` and left in a distinct `Unresolved` state (not silently retried forever) — a real production failure mode most demos don't show.
+- **Idempotent, non-destructive actions only.** `restart` and `traffic_shift` are safe to call against an already-healthy service. There is no delete, no scale-down, nothing in the whitelist that can make things worse.
+- **Duplicate-incident guard.** Before opening a new incident, the poller checks for an existing unresolved one for that service — the "don't page on-call twice for the same outage" rule.
+- **Diagnosis never blocks remediation.** If the Groq call errors, times out (10s), or returns unparseable JSON, diagnosis falls back to `{rootCause: "Diagnosis unavailable...", recommendedAction: "restart"}` rather than leaving an incident stuck.
+
+## How it works
+
+1. **Detect** — `poller.js` polls `/health` + `/metrics` on all 4 target services every 5s. Anomaly rules are simple, explainable thresholds (unreachable, error rate > 30%, p95 latency > 1500ms) — not ML, on purpose, so the trigger condition is always inspectable. An anomaly must persist for 2 consecutive polls before an incident opens (debounced against a single slow request).
+2. **Diagnose** — the affected service's last 12 metric snapshots, plus the same window for its immediate call-chain neighbors, go to Groq with instructions to name a root-cause service versus downstream symptoms (e.g. order-service's own latency rising only because it's waiting on a slow inventory-service, not because it's unhealthy itself) — real cross-service reasoning, not just labeling whichever service tripped the threshold first.
+3. **Remediate** — the recommended action (`restart` / `traffic_shift` / `rate_limit` / `monitor`) executes through the whitelist above. `traffic_shift` is real, not simulated: all synthetic and demo traffic flows through the control plane's own `/gateway/orders`, so flipping the active replica actually redirects live requests.
+4. **Verify & report** — 2 consecutive healthy polls close the incident as `Resolved`; persistent failure after 3 attempts closes it as `Unresolved`. Either way, Groq generates a postmortem (Summary / Timeline / Root Cause / Resolution / Follow-up) from the incident's own timestamps and root cause.
+
+## What I'd add next
+
+- Real chaos at the infrastructure level (killing a container/pod, not just an in-process fault flag) — would need a platform with that primitive on the free tier.
+- More fault types: partial network partitions, slow-DNS, clock skew.
+- Alerting integrations beyond the optional Discord webhook (PagerDuty/Opsgenie-style escalation).
+- A confidence-weighted remediation policy instead of a flat 3-attempt cap — e.g. don't retry the same action twice if the first attempt reported failure at the API level.
 
 ## Status
 
@@ -15,10 +96,16 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 - [x] Phase 7 — Postmortem generation (fallback template verified; real Groq output needs `GROQ_API_KEY`)
 - [x] Phase 8 — Break-It endpoint + dashboard (built, verified visually with a mock API — needs a live control plane + Vercel deploy)
 - [x] Phase 9 — Scheduled chaos + keep-alive (workflows written and YAML-validated; live runs need Actions enabled on the deployed repo)
-- [ ] Phase 10 — Polish & metrics
-- [ ] Phase 11 — Documentation & launch
+- [ ] Phase 10 — Polish & metrics (needs a live system running for a day+ to accumulate real MTTD/MTTR numbers)
+- [ ] Phase 11 — Documentation & launch (this README is launch-ready except the live link)
 
-## Local development
+Everything through Phase 9 is code-complete and tested as far as possible without external accounts — see each phase's commit message for exactly what was verified locally versus what still needs live Supabase/Groq/Render credentials to exercise for real.
+
+## Deployment
+
+Deploying requires five free accounts: GitHub (existing), [Render](https://render.com), [Vercel](https://vercel.com), [Supabase](https://supabase.com), and [Groq](https://console.groq.com) — all sign up with GitHub, no card needed. Do them in this order:
+
+### 1. Local development
 
 Each service under `services/` has its own `package.json`. Copy `.env.example` to `.env` and run:
 
@@ -35,45 +122,49 @@ curl -X POST localhost:3001/orders -H "Content-Type: application/json" -d '{"ite
 
 `services/control-plane` polls all 4 target services every 5s, writes to Supabase, and opens an incident once an anomaly persists for 2 consecutive polls. It requires `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` to start (see below) and defaults its target URLs to `localhost:3001/3011/3002/3003` for local dev (3011 is where a local `order-service-b` would run, e.g. `PORT=3011 REPLICA_ID=b npm run dev`).
 
-On startup it also runs a synthetic traffic generator (a random order every 2-4s through its own `POST /gateway/orders`) so the anomaly detector always has real request volume to measure against, and an incident state machine: **Detected → Diagnosing (Groq) → Remediating (restart via Render API / traffic_shift / rate_limit) → Verifying → Resolved**, retrying up to 3 times before marking an incident `Unresolved`. Real traffic should always go through `/gateway/orders` on the control plane, never straight at `order-service-a`/`-b`, or `traffic_shift` has nothing real to redirect.
+On startup it also runs a synthetic traffic generator (a random order every 2-4s through its own `POST /gateway/orders`) so the anomaly detector always has real request volume to measure against, and the incident state machine described above.
 
-## Setting up Supabase (Phase 4)
+### 2. Supabase
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql) once — creates `services`, `incidents`, `metrics_snapshots`.
 3. From Project Settings → API, copy the **Project URL** and the **`service_role` secret key** (not `anon`) into `control-plane`'s `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`. The `service_role` key must stay server-side only — never expose it to the dashboard.
 
-## Deploying to Render (Phases 2 & 4)
+### 3. Render (5 backend services)
 
-`render.yaml` at the repo root is a Render **Blueprint** that deploys all 5 services (`order-service-a`, `order-service-b`, `inventory-service`, `notification-service`, `control-plane`) in one pass — `order-service-a`/`-b` share the same `services/order-service` source, differing only by the `REPLICA_ID` env var, per the plan's alternative to a duplicated folder.
+`render.yaml` at the repo root is a Render **Blueprint** that deploys all 5 services (`order-service-a`, `order-service-b`, `inventory-service`, `notification-service`, `control-plane`) in one pass — `order-service-a`/`-b` share the same `services/order-service` source, differing only by the `REPLICA_ID` env var.
 
-1. Go to the [Render dashboard](https://dashboard.render.com) → **New** → **Blueprint**.
-2. Connect the `Aditya-tec/SRE-AGENT` GitHub repo (authorize Render's GitHub app if this is the first time).
+1. [Render dashboard](https://dashboard.render.com) → **New** → **Blueprint**.
+2. Connect the `Aditya-tec/SRE-AGENT` GitHub repo (authorize Render's GitHub app the first time).
 3. Render detects `render.yaml` and shows all 5 services to create. Confirm and deploy.
 4. Once live, each service gets a URL of the form `https://<service-name>.onrender.com`. **Verify these match** what's hardcoded in the blueprint's `INVENTORY_URL`/`NOTIFICATION_URL`/`ORDER_A_URL`/`ORDER_B_URL` values — if Render appended a suffix (name collision), update the affected env vars in the dashboard and redeploy.
-5. `control-plane` has several env vars marked `sync: false` (secrets Render won't store in the repo) — fill these in manually in the dashboard after first sync: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (from the Supabase setup above), `GROQ_API_KEY` (Phase 5), `RENDER_API_KEY` + `RENDER_SERVICE_IDS` (Phase 6), `DISCORD_WEBHOOK_URL` (optional).
+5. `control-plane` has several env vars marked `sync: false` (secrets Render won't store in the repo) — fill these in manually in the dashboard after first sync: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (from step 2), `GROQ_API_KEY` (from console.groq.com), `RENDER_API_KEY` + `RENDER_SERVICE_IDS` (Render account settings → API Keys, then a JSON map of service name → Render service id for the restart API), `DISCORD_WEBHOOK_URL` (optional).
 6. Confirm all 5 respond: `curl https://<name>.onrender.com/health` → `200 {"status":"healthy",...}`.
 
-Note: free-tier services sleep after ~15 min idle (first request after sleeping takes up to ~50s to wake) — this is expected until the keep-alive workflow is added in Phase 9.
+Note: free-tier services sleep after ~15 min idle (first request after sleeping takes up to ~50s to wake) — the keep-alive workflow (below) covers this once deployed.
 
-## Deploying the dashboard to Vercel (Phase 8)
+### 4. Vercel (dashboard)
 
 `dashboard/` is a Next.js (App Router) app — `POST /break-it` on the control plane, plus `GET /services`, `GET /incidents`, `GET /incidents/:id`, are the only APIs it talks to (never Supabase directly, keeping the `service_role` key server-side only).
 
 1. [vercel.com](https://vercel.com) → **New Project** → same `Aditya-tec/SRE-AGENT` repo → set **Root Directory** to `dashboard`.
 2. Framework preset: Next.js (auto-detected).
-3. Env var: `NEXT_PUBLIC_CONTROL_PLANE_URL` = the `control-plane` Render URL from the deploy above.
+3. Env var: `NEXT_PUBLIC_CONTROL_PLANE_URL` = the `control-plane` Render URL from step 3.
 4. Deploy. The dashboard polls `/services` every 5s and `/incidents` every 3s while any incident is unresolved (else every 15s).
 
-Local dev: `cd dashboard && npm install && npm run dev`, with `NEXT_PUBLIC_CONTROL_PLANE_URL` in `.env.local` pointing at a running `control-plane` (defaults to `http://localhost:3000` — adjust if that port is taken locally, e.g. `PORT=3005 npm start` in `control-plane` and `NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:3005`).
+Local dev: `cd dashboard && npm install && npm run dev`, with `NEXT_PUBLIC_CONTROL_PLANE_URL` in `.env.local` pointing at a running `control-plane`.
 
-The **Break It** button offers a curated, safe subset (crash order-service / slow down inventory-service / error-storm notification-service), calls `POST /break-it`, and the timeline below picks up the resulting incident within a few seconds. Verified locally against a mock of the control-plane API: service health grid, stat tiles, incident timeline, Break-It dropdown + toast, and the incident detail page (timeline, root-cause callout, markdown-rendered postmortem) all render correctly with zero console errors.
+The **Break It** button offers a curated, safe subset (crash order-service / slow down inventory-service / error-storm notification-service), calls `POST /break-it`, and the timeline picks up the resulting incident within a few seconds.
 
-## GitHub Actions (Phase 9)
+### 5. GitHub Actions
 
-Two workflows in `.github/workflows/`, both required for the free-tier services to stay demo-ready:
+Two workflows in `.github/workflows/`:
 
-- **`keep-alive.yml`** — pings all 5 Render services' `/health` every 10 minutes. Render sleeps a free web service after ~15 min idle; this keeps first-visit load times fast. The control plane's own 5s poll loop already keeps the 4 target services warm — this workflow's real job is keeping the *control plane itself* warm (nothing else polls it) and gives a redundant heartbeat for the rest.
-- **`scheduled-chaos.yml`** — every ~2 hours (`17 */2 * * *`), POSTs a randomly-picked service + fault type to `control-plane`'s `/break-it` with `triggerType: "autonomous"`, so the dashboard accumulates real unattended incidents, not just manually-triggered ones. Also runnable on demand via the Actions tab (`workflow_dispatch`), optionally pinning a specific service/fault.
+- **`keep-alive.yml`** — pings all 5 Render services' `/health` every 10 minutes.
+- **`scheduled-chaos.yml`** — every ~2 hours, POSTs a randomly-picked service + fault type to `control-plane`'s `/break-it` with `triggerType: "autonomous"`, so the dashboard accumulates real unattended incidents. Also runnable on demand via the Actions tab (`workflow_dispatch`).
 
-Both hardcode the `https://<service-name>.onrender.com` URLs from the Render deploy above — update them if any service ended up with a different URL. No GitHub secrets are needed since `/break-it` and `/health` aren't authenticated. Verified locally: YAML is valid, the bash random-selection logic picks uniformly across all 4 services × 3 fault types, and a live `POST /break-it` call against the real services applies the chaos fault correctly (confirmed via `/chaos/status`) and rejects an invalid service name with `400`. Actually running on schedule requires Actions to be enabled on the GitHub repo (on by default) — nothing further to configure.
+Both hardcode the `https://<service-name>.onrender.com` URLs — update them if any service ended up with a different URL. No GitHub secrets needed since neither endpoint is authenticated; Actions is on by default.
+
+### After deploying
+
+Let the scheduled workflow run for a day or two, then pull the real numbers (avg MTTD, avg MTTR, % auto-resolved without hitting the attempt cap, autonomous vs. manual incident counts) from the dashboard for Phase 10/11 — the "47 incidents, 94% auto-resolved, avg MTTR 38s" kind of evidence that makes the project credible, not just the claim.
