@@ -12,7 +12,7 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 - [x] Phase 4 — Control plane: polling + detection (code complete, needs a live Supabase project to persist)
 - [x] Phase 5 — Diagnosis (code complete, needs a `GROQ_API_KEY` to exercise the real LLM call — fallback path verified)
 - [x] Phase 6 — Remediation (full state machine verified locally: restart/traffic_shift/rate_limit, retry-to-max-attempts, and recovery-to-Resolved)
-- [ ] Phase 7 — Postmortem generation
+- [x] Phase 7 — Postmortem generation (fallback template verified; real Groq output needs `GROQ_API_KEY`)
 - [ ] Phase 8 — Break-It endpoint + dashboard
 - [ ] Phase 9 — Scheduled chaos + keep-alive
 - [ ] Phase 10 — Polish & metrics

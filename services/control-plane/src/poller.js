@@ -3,6 +3,7 @@ const detector = require('./detector');
 const { diagnose } = require('./diagnose');
 const { remediate, clearRateLimitFor, MAX_ATTEMPTS } = require('./remediate');
 const { notifyDiscord } = require('./discord');
+const { generatePostmortem } = require('./postmortem');
 
 const POLL_INTERVAL_MS = 5000;
 const FETCH_TIMEOUT_MS = 3000;
@@ -168,8 +169,9 @@ async function resolveIncident(serviceName, tracked, success) {
   activeIncidents.delete(serviceName);
   clearRateLimitFor(serviceName);
 
+  let updated;
   try {
-    await db.updateIncident(tracked.incidentId, {
+    updated = await db.updateIncident(tracked.incidentId, {
       resolved_at: new Date().toISOString(),
       remediation_success: success,
     });
@@ -183,6 +185,16 @@ async function resolveIncident(serviceName, tracked, success) {
   } else {
     console.log(`[poller] state transition -> Unresolved (max attempts): incident ${tracked.incidentId} (${serviceName})`);
     await notifyDiscord(`⚠️ Unresolved after ${MAX_ATTEMPTS} attempts: ${serviceName} incident ${tracked.incidentId}`);
+  }
+
+  if (updated) {
+    try {
+      const postmortem = await generatePostmortem(updated);
+      await db.updateIncident(tracked.incidentId, { postmortem });
+      console.log(`[poller] postmortem generated for incident ${tracked.incidentId}`);
+    } catch (err) {
+      console.error(`[poller] postmortem generation failed for incident ${tracked.incidentId}:`, err.message);
+    }
   }
 }
 
