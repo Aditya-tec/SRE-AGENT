@@ -1,0 +1,50 @@
+services:
+  - name: order-service-a
+    type: web
+    runtime: node
+    plan: free
+    rootDir: services/order-service
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: REPLICA_ID
+        value: a
+      - key: INVENTORY_URL
+        value: https://inventory-service.onrender.com
+      - key: NOTIFICATION_URL
+        value: https://notification-service.onrender.com
+
+  - name: order-service-b
+    type: web
+    runtime: node
+    plan: free
+    rootDir: services/order-service
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: REPLICA_ID
+        value: b
+      - key: INVENTORY_URL
+        value: https://inventory-service.onrender.com
+      - key: NOTIFICATION_URL
+        value: https://notification-service.onrender.com
+
+  - name: inventory-service
+    type: web
+    runtime: node
+    plan: free
+    rootDir: services/inventory-service
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+
+  - name: notification-service
+    type: web
+    runtime: node
+    plan: free
+    rootDir: services/notification-service
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
