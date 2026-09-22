@@ -71,6 +71,28 @@ Every remediation action runs through a whitelist, never free-form LLM-executed 
 - **Duplicate-incident guard.** Before opening a new incident, the poller checks for an existing unresolved one for that service — the "don't page on-call twice for the same outage" rule.
 - **Diagnosis never blocks remediation.** If the Groq call errors, times out (10s), or returns unparseable JSON, diagnosis falls back to `{rootCause: "Diagnosis unavailable...", recommendedAction: "restart"}` rather than leaving an incident stuck.
 
+## Security hardening
+
+This is a public demo with an endpoint whose whole job is to inject faults — the attack surface is worth taking seriously, not hand-waving past:
+
+- **`helmet` + rate limiting on every service.** All 5 backend services set standard security headers and cap requests to 60/min/IP; the control plane adds a tighter 10/min/IP limit on `/break-it` specifically, since that's the one endpoint that makes something worse on purpose.
+- **`CHAOS_SECRET` gates the fault-injection endpoints.** `POST /chaos` on all 4 target services requires an `x-chaos-secret` header matching a shared secret once one is configured — closes off "anyone with the URL can crash the public demo forever." Left unset, it stays open for local dev. `/chaos/status` (read-only) is never gated. `POST /break-it` on the control plane stays intentionally public (it's the whole point of the demo) but is rate-limited.
+- **Locked-down CORS.** `DASHBOARD_ORIGIN` restricts the control plane's API to the deployed dashboard's origin once set; defaults to open for local dev.
+- **Small JSON body limits (10kb)** on every service — these payloads are a few fields, nothing should ever be near that size.
+- **Defensive error handling.** Every service has a JSON error-handling middleware (never leaks Express's default HTML/stack-trace error page) and process-level `unhandledRejection`/`uncaughtException` handlers that log instead of silently dying.
+- **`npm audit --audit-level=high` runs in CI** for every service on every push — currently 0 known high/critical vulnerabilities across all 5.
+- **Secrets never reach the browser.** `SUPABASE_SERVICE_KEY`, `GROQ_API_KEY`, `RENDER_API_KEY`, and `CHAOS_SECRET` only ever live in `control-plane`'s server-side env; the dashboard only ever talks to `control-plane`'s own API.
+
+## Testing & CI
+
+83 automated tests across all 5 services (Node's built-in `node:test`, no test framework dependency), covering:
+
+- **Pure logic**: sliding-window metrics (the regression test for a real dilution bug found while building this — see the Phase 4 commit), chaos fault application/auto-clear, anomaly detection + debounce, gateway traffic-shift/rate-limit state, incident-phase derivation.
+- **Route-level integration tests**: real Express apps started on ephemeral ports, hit with real `fetch` calls — order flow (including "notification-service unreachable must not fail the order"), inventory reservation edge cases, the `CHAOS_SECRET` gate, `/break-it` validation and trigger-context wiring, the `/gateway/orders` replica routing and rate-limit rejection.
+- **The full incident state machine**, end to end, against an in-memory stubbed database and real mock HTTP servers: a permanently-down service reaching `Unresolved` after exactly 3 attempts, a service that recovers reaching `Resolved` after 2 healthy polls, and the duplicate-incident guard holding under repeated detection cycles.
+
+`.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run build` (dashboard only), and `npm audit --audit-level=high` for all 5 services on every push/PR to `main`, plus a YAML-validation job for `render.yaml` and the other workflows. Run locally: `cd <service> && npm test`.
+
 ## How it works
 
 1. **Detect** — `poller.js` polls `/health` + `/metrics` on all 4 target services every 5s. Anomaly rules are simple, explainable thresholds (unreachable, error rate > 30%, p95 latency > 1500ms) — not ML, on purpose, so the trigger condition is always inspectable. An anomaly must persist for 2 consecutive polls before an incident opens (debounced against a single slow request).
@@ -98,6 +120,7 @@ Every remediation action runs through a whitelist, never free-form LLM-executed 
 - [x] Phase 9 — Scheduled chaos + keep-alive (workflows written and YAML-validated; live runs need Actions enabled on the deployed repo)
 - [ ] Phase 10 — Polish & metrics (needs a live system running for a day+ to accumulate real MTTD/MTTR numbers)
 - [ ] Phase 11 — Documentation & launch (this README is launch-ready except the live link)
+- [x] Hardening pass — 83 automated tests, CI (`ci.yml`) on every push/PR, `CHAOS_SECRET` gating, rate limiting, `helmet`, restricted CORS, 0 known high/critical vulnerabilities (see [Security hardening](#security-hardening) and [Testing & CI](#testing--ci))
 
 Everything through Phase 9 is code-complete and tested as far as possible without external accounts — see each phase's commit message for exactly what was verified locally versus what still needs live Supabase/Groq/Render credentials to exercise for real.
 
@@ -138,8 +161,9 @@ On startup it also runs a synthetic traffic generator (a random order every 2-4s
 2. Connect the `Aditya-tec/SRE-AGENT` GitHub repo (authorize Render's GitHub app the first time).
 3. Render detects `render.yaml` and shows all 5 services to create. Confirm and deploy.
 4. Once live, each service gets a URL of the form `https://<service-name>.onrender.com`. **Verify these match** what's hardcoded in the blueprint's `INVENTORY_URL`/`NOTIFICATION_URL`/`ORDER_A_URL`/`ORDER_B_URL` values — if Render appended a suffix (name collision), update the affected env vars in the dashboard and redeploy.
-5. `control-plane` has several env vars marked `sync: false` (secrets Render won't store in the repo) — fill these in manually in the dashboard after first sync: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (from step 2), `GROQ_API_KEY` (from console.groq.com), `RENDER_API_KEY` + `RENDER_SERVICE_IDS` (Render account settings → API Keys, then a JSON map of service name → Render service id for the restart API), `DISCORD_WEBHOOK_URL` (optional).
-6. Confirm all 5 respond: `curl https://<name>.onrender.com/health` → `200 {"status":"healthy",...}`.
+5. `control-plane` has several env vars marked `sync: false` (secrets Render won't store in the repo) — fill these in manually in the dashboard after first sync: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (from step 2), `GROQ_API_KEY` (from console.groq.com), `RENDER_API_KEY` + `RENDER_SERVICE_IDS` (Render account settings → API Keys, then a JSON map of service name → Render service id for the restart API), `DISCORD_WEBHOOK_URL` (optional), `DASHBOARD_ORIGIN` (fill in after the Vercel deploy below).
+6. **`CHAOS_SECRET`** (recommended): pick any random string and set it as the *same* value on all 5 services — `order-service-a`, `order-service-b`, `inventory-service`, `notification-service`, and `control-plane`. This gates `POST /chaos` on the 4 target services so only the control plane can inject faults; without it, anyone with a service's URL could crash the public demo indefinitely. Redeploy each service after setting it.
+7. Confirm all 5 respond: `curl https://<name>.onrender.com/health` → `200 {"status":"healthy",...}`.
 
 Note: free-tier services sleep after ~15 min idle (first request after sleeping takes up to ~50s to wake) — the keep-alive workflow (below) covers this once deployed.
 
@@ -151,6 +175,7 @@ Note: free-tier services sleep after ~15 min idle (first request after sleeping 
 2. Framework preset: Next.js (auto-detected).
 3. Env var: `NEXT_PUBLIC_CONTROL_PLANE_URL` = the `control-plane` Render URL from step 3.
 4. Deploy. The dashboard polls `/services` every 5s and `/incidents` every 3s while any incident is unresolved (else every 15s).
+5. Optional but recommended: once you have the Vercel URL, go back to `control-plane`'s env vars on Render and set `DASHBOARD_ORIGIN` to it, then redeploy — locks the control plane's API down to only the dashboard's origin instead of any site on the internet.
 
 Local dev: `cd dashboard && npm install && npm run dev`, with `NEXT_PUBLIC_CONTROL_PLANE_URL` in `.env.local` pointing at a running `control-plane`.
 

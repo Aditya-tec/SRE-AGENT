@@ -14,6 +14,8 @@ services:
         value: https://inventory-service.onrender.com
       - key: NOTIFICATION_URL
         value: https://notification-service.onrender.com
+      - key: CHAOS_SECRET
+        sync: false
 
   - name: order-service-b
     type: web
@@ -30,6 +32,8 @@ services:
         value: https://inventory-service.onrender.com
       - key: NOTIFICATION_URL
         value: https://notification-service.onrender.com
+      - key: CHAOS_SECRET
+        sync: false
 
   - name: inventory-service
     type: web
@@ -39,6 +43,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    envVars:
+      - key: CHAOS_SECRET
+        sync: false
 
   - name: notification-service
     type: web
@@ -48,6 +55,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    envVars:
+      - key: CHAOS_SECRET
+        sync: false
 
   - name: control-plane
     type: web
@@ -77,4 +87,8 @@ services:
       - key: RENDER_SERVICE_IDS
         sync: false
       - key: DISCORD_WEBHOOK_URL
+        sync: false
+      - key: CHAOS_SECRET
+        sync: false
+      - key: DASHBOARD_ORIGIN
         sync: false
