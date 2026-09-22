@@ -1,0 +1,35 @@
+name: scheduled-chaos
+
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Target service (blank = random)'
+        required: false
+      faultType:
+        description: 'latency | error_rate | crash (blank = random)'
+        required: false
+
+jobs:
+  break-it:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger a chaos fault via the control plane
+        env:
+          CONTROL_PLANE_URL: https://control-plane.onrender.com
+          SERVICE_INPUT: ${{ github.event.inputs.service }}
+          FAULT_INPUT: ${{ github.event.inputs.faultType }}
+        run: |
+          set -x
+          services=(order-service-a order-service-b inventory-service notification-service)
+          faults=(latency error_rate crash)
+
+          service="${SERVICE_INPUT:-${services[$RANDOM % ${#services[@]}]}}"
+          faultType="${FAULT_INPUT:-${faults[$RANDOM % ${#faults[@]}]}}"
+
+          echo "Triggering $faultType on $service"
+          curl -sf --max-time 60 -X POST "$CONTROL_PLANE_URL/break-it" \
+            -H "Content-Type: application/json" \
+            -d "{\"service\":\"$service\",\"faultType\":\"$faultType\",\"triggerType\":\"autonomous\"}"

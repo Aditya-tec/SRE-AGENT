@@ -14,7 +14,7 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 - [x] Phase 6 — Remediation (full state machine verified locally: restart/traffic_shift/rate_limit, retry-to-max-attempts, and recovery-to-Resolved)
 - [x] Phase 7 — Postmortem generation (fallback template verified; real Groq output needs `GROQ_API_KEY`)
 - [x] Phase 8 — Break-It endpoint + dashboard (built, verified visually with a mock API — needs a live control plane + Vercel deploy)
-- [ ] Phase 9 — Scheduled chaos + keep-alive
+- [x] Phase 9 — Scheduled chaos + keep-alive (workflows written and YAML-validated; live runs need Actions enabled on the deployed repo)
 - [ ] Phase 10 — Polish & metrics
 - [ ] Phase 11 — Documentation & launch
 
@@ -68,3 +68,12 @@ Note: free-tier services sleep after ~15 min idle (first request after sleeping 
 Local dev: `cd dashboard && npm install && npm run dev`, with `NEXT_PUBLIC_CONTROL_PLANE_URL` in `.env.local` pointing at a running `control-plane` (defaults to `http://localhost:3000` — adjust if that port is taken locally, e.g. `PORT=3005 npm start` in `control-plane` and `NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:3005`).
 
 The **Break It** button offers a curated, safe subset (crash order-service / slow down inventory-service / error-storm notification-service), calls `POST /break-it`, and the timeline below picks up the resulting incident within a few seconds. Verified locally against a mock of the control-plane API: service health grid, stat tiles, incident timeline, Break-It dropdown + toast, and the incident detail page (timeline, root-cause callout, markdown-rendered postmortem) all render correctly with zero console errors.
+
+## GitHub Actions (Phase 9)
+
+Two workflows in `.github/workflows/`, both required for the free-tier services to stay demo-ready:
+
+- **`keep-alive.yml`** — pings all 5 Render services' `/health` every 10 minutes. Render sleeps a free web service after ~15 min idle; this keeps first-visit load times fast. The control plane's own 5s poll loop already keeps the 4 target services warm — this workflow's real job is keeping the *control plane itself* warm (nothing else polls it) and gives a redundant heartbeat for the rest.
+- **`scheduled-chaos.yml`** — every ~2 hours (`17 */2 * * *`), POSTs a randomly-picked service + fault type to `control-plane`'s `/break-it` with `triggerType: "autonomous"`, so the dashboard accumulates real unattended incidents, not just manually-triggered ones. Also runnable on demand via the Actions tab (`workflow_dispatch`), optionally pinning a specific service/fault.
+
+Both hardcode the `https://<service-name>.onrender.com` URLs from the Render deploy above — update them if any service ended up with a different URL. No GitHub secrets are needed since `/break-it` and `/health` aren't authenticated. Verified locally: YAML is valid, the bash random-selection logic picks uniformly across all 4 services × 3 fault types, and a live `POST /break-it` call against the real services applies the chaos fault correctly (confirmed via `/chaos/status`) and rejects an invalid service name with `400`. Actually running on schedule requires Actions to be enabled on the GitHub repo (on by default) — nothing further to configure.
