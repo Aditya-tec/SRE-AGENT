@@ -48,3 +48,33 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+
+  - name: control-plane
+    type: web
+    runtime: node
+    plan: free
+    rootDir: services/control-plane
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: ORDER_A_URL
+        value: https://order-service-a.onrender.com
+      - key: ORDER_B_URL
+        value: https://order-service-b.onrender.com
+      - key: INVENTORY_URL
+        value: https://inventory-service.onrender.com
+      - key: NOTIFICATION_URL
+        value: https://notification-service.onrender.com
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_IDS
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
+        sync: false

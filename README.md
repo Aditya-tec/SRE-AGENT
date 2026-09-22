@@ -8,8 +8,8 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 
 - [x] Phase 1 — Target services (order, inventory, notification) built and verified locally
 - [x] Phase 2 — Deploy target services to Render (render.yaml Blueprint ready)
-- [ ] Phase 3 — Chaos endpoints
-- [ ] Phase 4 — Control plane: polling + detection
+- [x] Phase 3 — Chaos endpoints
+- [x] Phase 4 — Control plane: polling + detection (code complete, needs a live Supabase project to persist)
 - [ ] Phase 5 — Diagnosis
 - [ ] Phase 6 — Remediation
 - [ ] Phase 7 — Postmortem generation
@@ -27,20 +27,29 @@ npm install
 npm run dev
 ```
 
-Order flow: `order-service` (port 3001) → `inventory-service` (port 3002) → `notification-service` (port 3003).
+Order flow: `order-service` (port 3001) → `inventory-service` (port 3002) → `notification-service` (port 3003). Each service also exposes `POST /chaos` (`{"type":"latency"|"error_rate"|"crash","durationSec":30}`) and `GET /chaos/status`.
 
 ```
 curl -X POST localhost:3001/orders -H "Content-Type: application/json" -d '{"item":"blue-mug","quantity":2}'
 ```
 
-## Deploying to Render (Phase 2)
+`services/control-plane` polls all 4 target services every 5s, writes to Supabase, and opens an incident once an anomaly persists for 2 consecutive polls. It requires `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` to start (see below) and defaults its target URLs to `localhost:3001/3011/3002/3003` for local dev (3011 is where a local `order-service-b` would run, e.g. `PORT=3011 REPLICA_ID=b npm run dev`).
 
-`render.yaml` at the repo root is a Render **Blueprint** that deploys all 4 target services (`order-service-a`, `order-service-b`, `inventory-service`, `notification-service`) in one pass — `order-service-a`/`-b` share the same `services/order-service` source, differing only by the `REPLICA_ID` env var, per the plan's alternative to a duplicated folder.
+## Setting up Supabase (Phase 4)
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql) once — creates `services`, `incidents`, `metrics_snapshots`.
+3. From Project Settings → API, copy the **Project URL** and the **`service_role` secret key** (not `anon`) into `control-plane`'s `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`. The `service_role` key must stay server-side only — never expose it to the dashboard.
+
+## Deploying to Render (Phases 2 & 4)
+
+`render.yaml` at the repo root is a Render **Blueprint** that deploys all 5 services (`order-service-a`, `order-service-b`, `inventory-service`, `notification-service`, `control-plane`) in one pass — `order-service-a`/`-b` share the same `services/order-service` source, differing only by the `REPLICA_ID` env var, per the plan's alternative to a duplicated folder.
 
 1. Go to the [Render dashboard](https://dashboard.render.com) → **New** → **Blueprint**.
 2. Connect the `Aditya-tec/SRE-AGENT` GitHub repo (authorize Render's GitHub app if this is the first time).
-3. Render detects `render.yaml` and shows all 4 services to create. Confirm and deploy.
-4. Once live, each service gets a URL of the form `https://<service-name>.onrender.com`. **Verify these match** what's hardcoded in `render.yaml`'s `INVENTORY_URL`/`NOTIFICATION_URL` — if Render appended a suffix (name collision), update those two env vars in the dashboard for `order-service-a` and `order-service-b` to match the real `inventory-service` URL, then manually redeploy those two services.
-5. Confirm all 4 respond: `curl https://<name>.onrender.com/health` → `200 {"status":"healthy",...}`.
+3. Render detects `render.yaml` and shows all 5 services to create. Confirm and deploy.
+4. Once live, each service gets a URL of the form `https://<service-name>.onrender.com`. **Verify these match** what's hardcoded in the blueprint's `INVENTORY_URL`/`NOTIFICATION_URL`/`ORDER_A_URL`/`ORDER_B_URL` values — if Render appended a suffix (name collision), update the affected env vars in the dashboard and redeploy.
+5. `control-plane` has several env vars marked `sync: false` (secrets Render won't store in the repo) — fill these in manually in the dashboard after first sync: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (from the Supabase setup above), `GROQ_API_KEY` (Phase 5), `RENDER_API_KEY` + `RENDER_SERVICE_IDS` (Phase 6), `DISCORD_WEBHOOK_URL` (optional).
+6. Confirm all 5 respond: `curl https://<name>.onrender.com/health` → `200 {"status":"healthy",...}`.
 
 Note: free-tier services sleep after ~15 min idle (first request after sleeping takes up to ~50s to wake) — this is expected until the keep-alive workflow is added in Phase 9.
