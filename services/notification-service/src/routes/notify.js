@@ -1,8 +1,14 @@
 const express = require('express');
+const { maybeApplyChaos } = require('../chaosState');
 
 const router = express.Router();
 
-router.post('/notify', (req, res) => {
+router.post('/notify', async (req, res) => {
+  const chaosResult = await maybeApplyChaos();
+  if (chaosResult) {
+    return res.status(chaosResult.status).json(chaosResult.body);
+  }
+
   const { orderId, message } = req.body || {};
 
   if (typeof orderId !== 'string' || typeof message !== 'string') {

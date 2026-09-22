@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const { maybeApplyChaos } = require('../chaosState');
 
 const router = express.Router();
 const orders = new Map();
@@ -26,6 +27,11 @@ async function callUpstream(url, body) {
 }
 
 router.post('/orders', async (req, res) => {
+  const chaosResult = await maybeApplyChaos();
+  if (chaosResult) {
+    return res.status(chaosResult.status).json(chaosResult.body);
+  }
+
   const { item, quantity } = req.body || {};
 
   if (typeof item !== 'string' || !Number.isInteger(quantity) || quantity <= 0) {

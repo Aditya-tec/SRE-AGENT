@@ -3,6 +3,7 @@ const { recordRequest } = require('./metricsState');
 const healthRoute = require('./routes/health');
 const metricsRoute = require('./routes/metrics');
 const reserveRoute = require('./routes/reserve');
+const chaosRoute = require('./routes/chaos');
 
 const app = express();
 app.use(express.json());
@@ -18,6 +19,7 @@ app.use((req, res, next) => {
 app.use(healthRoute);
 app.use(metricsRoute);
 app.use(reserveRoute);
+app.use(chaosRoute);
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
