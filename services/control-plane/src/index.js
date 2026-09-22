@@ -5,6 +5,7 @@ const trafficGenerator = require('./trafficGenerator');
 const incidentsRoute = require('./routes/incidents');
 const servicesRoute = require('./routes/services');
 const gatewayRoute = require('./routes/gateway');
+const breakItRoute = require('./routes/breakIt');
 
 const app = express();
 app.use(cors());
@@ -17,6 +18,7 @@ app.get('/health', (req, res) => {
 app.use(incidentsRoute);
 app.use(servicesRoute);
 app.use(gatewayRoute);
+app.use(breakItRoute);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

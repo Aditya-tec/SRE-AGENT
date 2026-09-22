@@ -4,6 +4,7 @@ const { diagnose } = require('./diagnose');
 const { remediate, clearRateLimitFor, MAX_ATTEMPTS } = require('./remediate');
 const { notifyDiscord } = require('./discord');
 const { generatePostmortem } = require('./postmortem');
+const { consumePendingTrigger } = require('./triggerContext');
 
 const POLL_INTERVAL_MS = 5000;
 const FETCH_TIMEOUT_MS = 3000;
@@ -96,7 +97,7 @@ async function openIncident(serviceName, evaluation) {
 
     incident = await db.insertIncident({
       service_name: serviceName,
-      trigger_type: 'manual',
+      trigger_type: consumePendingTrigger(serviceName),
       fault_type: evaluation.faultType,
       detected_at: new Date().toISOString(),
     });
@@ -139,6 +140,12 @@ async function attemptRemediation(serviceName, incident, action) {
 
   console.log(`[poller] state transition -> Remediating: incident ${tracked.incidentId} (attempt ${tracked.attempts}/${MAX_ATTEMPTS}, action=${action})`);
   await remediate(incident, action);
+
+  try {
+    await db.updateIncident(tracked.incidentId, { remediated_at: new Date().toISOString() });
+  } catch (err) {
+    console.error(`[poller] failed to record remediated_at for incident ${tracked.incidentId}:`, err.message);
+  }
 
   console.log(`[poller] state transition -> Verifying: incident ${tracked.incidentId}`);
 }
