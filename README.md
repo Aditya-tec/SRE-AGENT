@@ -13,7 +13,7 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 - [x] Phase 5 — Diagnosis (code complete, needs a `GROQ_API_KEY` to exercise the real LLM call — fallback path verified)
 - [x] Phase 6 — Remediation (full state machine verified locally: restart/traffic_shift/rate_limit, retry-to-max-attempts, and recovery-to-Resolved)
 - [x] Phase 7 — Postmortem generation (fallback template verified; real Groq output needs `GROQ_API_KEY`)
-- [ ] Phase 8 — Break-It endpoint + dashboard
+- [x] Phase 8 — Break-It endpoint + dashboard (built, verified visually with a mock API — needs a live control plane + Vercel deploy)
 - [ ] Phase 9 — Scheduled chaos + keep-alive
 - [ ] Phase 10 — Polish & metrics
 - [ ] Phase 11 — Documentation & launch
@@ -55,3 +55,16 @@ On startup it also runs a synthetic traffic generator (a random order every 2-4s
 6. Confirm all 5 respond: `curl https://<name>.onrender.com/health` → `200 {"status":"healthy",...}`.
 
 Note: free-tier services sleep after ~15 min idle (first request after sleeping takes up to ~50s to wake) — this is expected until the keep-alive workflow is added in Phase 9.
+
+## Deploying the dashboard to Vercel (Phase 8)
+
+`dashboard/` is a Next.js (App Router) app — `POST /break-it` on the control plane, plus `GET /services`, `GET /incidents`, `GET /incidents/:id`, are the only APIs it talks to (never Supabase directly, keeping the `service_role` key server-side only).
+
+1. [vercel.com](https://vercel.com) → **New Project** → same `Aditya-tec/SRE-AGENT` repo → set **Root Directory** to `dashboard`.
+2. Framework preset: Next.js (auto-detected).
+3. Env var: `NEXT_PUBLIC_CONTROL_PLANE_URL` = the `control-plane` Render URL from the deploy above.
+4. Deploy. The dashboard polls `/services` every 5s and `/incidents` every 3s while any incident is unresolved (else every 15s).
+
+Local dev: `cd dashboard && npm install && npm run dev`, with `NEXT_PUBLIC_CONTROL_PLANE_URL` in `.env.local` pointing at a running `control-plane` (defaults to `http://localhost:3000` — adjust if that port is taken locally, e.g. `PORT=3005 npm start` in `control-plane` and `NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:3005`).
+
+The **Break It** button offers a curated, safe subset (crash order-service / slow down inventory-service / error-storm notification-service), calls `POST /break-it`, and the timeline below picks up the resulting incident within a few seconds. Verified locally against a mock of the control-plane API: service health grid, stat tiles, incident timeline, Break-It dropdown + toast, and the incident detail page (timeline, root-cause callout, markdown-rendered postmortem) all render correctly with zero console errors.
