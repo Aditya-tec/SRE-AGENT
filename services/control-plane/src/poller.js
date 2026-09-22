@@ -1,5 +1,6 @@
 const db = require('./db');
 const detector = require('./detector');
+const { diagnose } = require('./diagnose');
 
 const POLL_INTERVAL_MS = 5000;
 const FETCH_TIMEOUT_MS = 3000;
@@ -66,11 +67,12 @@ async function pollService(name, baseUrl) {
 }
 
 async function openIncidentIfNeeded(serviceName, evaluation) {
+  let incident;
   try {
     const existing = await db.getUnresolvedIncident(serviceName);
     if (existing) return;
 
-    const incident = await db.insertIncident({
+    incident = await db.insertIncident({
       service_name: serviceName,
       trigger_type: 'manual',
       fault_type: evaluation.faultType,
@@ -80,6 +82,24 @@ async function openIncidentIfNeeded(serviceName, evaluation) {
     console.log(`[poller] state transition -> Detected: ${serviceName} (${evaluation.reason}), incident ${incident.id}`);
   } catch (err) {
     console.error(`[poller] failed to open incident for ${serviceName}:`, err.message);
+    return;
+  }
+
+  try {
+    console.log(`[poller] state transition -> Diagnosing: incident ${incident.id}`);
+    const diagnosis = await diagnose(incident);
+
+    await db.updateIncident(incident.id, {
+      root_cause: diagnosis.rootCause,
+      raw_context: diagnosis.context,
+      diagnosed_at: new Date().toISOString(),
+    });
+
+    console.log(
+      `[poller] diagnosed incident ${incident.id}: "${diagnosis.rootCause}" (confidence=${diagnosis.confidence}, recommends=${diagnosis.recommendedAction})`
+    );
+  } catch (err) {
+    console.error(`[poller] diagnosis pipeline failed for incident ${incident.id}:`, err.message);
   }
 }
 

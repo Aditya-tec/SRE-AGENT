@@ -10,7 +10,7 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 - [x] Phase 2 — Deploy target services to Render (render.yaml Blueprint ready)
 - [x] Phase 3 — Chaos endpoints
 - [x] Phase 4 — Control plane: polling + detection (code complete, needs a live Supabase project to persist)
-- [ ] Phase 5 — Diagnosis
+- [x] Phase 5 — Diagnosis (code complete, needs a `GROQ_API_KEY` to exercise the real LLM call — fallback path verified)
 - [ ] Phase 6 — Remediation
 - [ ] Phase 7 — Postmortem generation
 - [ ] Phase 8 — Break-It endpoint + dashboard
