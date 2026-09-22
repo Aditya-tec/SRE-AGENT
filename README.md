@@ -11,7 +11,7 @@ Full build plan lives in project notes. This README will be filled out in Phase 
 - [x] Phase 3 — Chaos endpoints
 - [x] Phase 4 — Control plane: polling + detection (code complete, needs a live Supabase project to persist)
 - [x] Phase 5 — Diagnosis (code complete, needs a `GROQ_API_KEY` to exercise the real LLM call — fallback path verified)
-- [ ] Phase 6 — Remediation
+- [x] Phase 6 — Remediation (full state machine verified locally: restart/traffic_shift/rate_limit, retry-to-max-attempts, and recovery-to-Resolved)
 - [ ] Phase 7 — Postmortem generation
 - [ ] Phase 8 — Break-It endpoint + dashboard
 - [ ] Phase 9 — Scheduled chaos + keep-alive
@@ -34,6 +34,8 @@ curl -X POST localhost:3001/orders -H "Content-Type: application/json" -d '{"ite
 ```
 
 `services/control-plane` polls all 4 target services every 5s, writes to Supabase, and opens an incident once an anomaly persists for 2 consecutive polls. It requires `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` to start (see below) and defaults its target URLs to `localhost:3001/3011/3002/3003` for local dev (3011 is where a local `order-service-b` would run, e.g. `PORT=3011 REPLICA_ID=b npm run dev`).
+
+On startup it also runs a synthetic traffic generator (a random order every 2-4s through its own `POST /gateway/orders`) so the anomaly detector always has real request volume to measure against, and an incident state machine: **Detected → Diagnosing (Groq) → Remediating (restart via Render API / traffic_shift / rate_limit) → Verifying → Resolved**, retrying up to 3 times before marking an incident `Unresolved`. Real traffic should always go through `/gateway/orders` on the control plane, never straight at `order-service-a`/`-b`, or `traffic_shift` has nothing real to redirect.
 
 ## Setting up Supabase (Phase 4)
 
