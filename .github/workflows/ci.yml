@@ -45,6 +45,16 @@ jobs:
         working-directory: ${{ matrix.dir }}
         run: npm run build
 
+      - name: Confirm no server secrets leaked into the client bundle
+        if: matrix.name == 'dashboard'
+        working-directory: ${{ matrix.dir }}
+        run: |
+          if grep -rlE "SUPABASE_SERVICE_KEY|GROQ_API_KEY|RENDER_API_KEY|CHAOS_SECRET|RENDER_SERVICE_IDS|DISCORD_WEBHOOK_URL" .next/; then
+            echo "::error::A control-plane-only secret name was found in the dashboard build output — it should never be referenced from dashboard code."
+            exit 1
+          fi
+          echo "clean — no server-only secret names found in the built dashboard"
+
       - name: Audit dependencies (fail on high/critical)
         working-directory: ${{ matrix.dir }}
         run: npm audit --audit-level=high

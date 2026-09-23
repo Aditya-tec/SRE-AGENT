@@ -65,6 +65,7 @@ function startHealthServer({ healthy }) {
     });
     server.keepAliveTimeout = 1;
     server.listen(0, () => resolve(server));
+    server.unref(); // never block this test file's process from exiting
   });
 }
 
@@ -82,6 +83,7 @@ async function freshPoller(urls) {
     '../src/postmortem',
     '../src/gatewayState',
     '../src/triggerContext',
+    '../src/chaosLock',
   ]) {
     delete require.cache[require.resolve(mod)];
   }
@@ -188,6 +190,126 @@ test('duplicate-incident guard: only one open incident per service at a time', a
     }
 
     assert.ok(sawAnOpenIncident, 'an incident should have opened for order-service-a at some point');
+  } finally {
+    down.close();
+    healthyStub.close();
+  }
+});
+
+test('getLastPollAt is null before the first cycle and set after each cycle', async () => {
+  installFakeDb();
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${healthyStub.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${healthyStub.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+
+    assert.equal(poller.getLastPollAt(), null);
+    await poller.pollAll();
+    const first = poller.getLastPollAt();
+    assert.ok(first, 'lastPollAt should be set after a cycle completes');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await poller.pollAll();
+    assert.notEqual(poller.getLastPollAt(), first, 'lastPollAt should advance on each cycle');
+  } finally {
+    healthyStub.close();
+  }
+});
+
+test('overlapping pollAll calls: a slow cycle is not run twice concurrently', async () => {
+  installFakeDb();
+  // Track concurrency on ONE service only (order-service-a). A single
+  // legitimate cycle polls all 4 services in parallel, so pointing
+  // every service at this same tracker would show "4 concurrent" just
+  // from one normal cycle — that's not what's under test here. What's
+  // under test is whether THIS one service ever gets hit twice at once
+  // across two overlapping pollAll() invocations.
+  let inFlight = 0;
+  let maxConcurrent = 0;
+  let totalRequests = 0;
+
+  const slow = await new Promise((resolve) => {
+    const server = require('node:http').createServer((req, res) => {
+      res.setHeader('Connection', 'close');
+      if (req.url === '/health') {
+        totalRequests++;
+        inFlight++;
+        maxConcurrent = Math.max(maxConcurrent, inFlight);
+        setTimeout(() => {
+          inFlight--;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'healthy' }));
+        }, 200);
+      } else if (req.url === '/metrics') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ requestCount: 10, errorCount: 0, p95LatencyMs: 20 }));
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    server.keepAliveTimeout = 1;
+    server.listen(0, () => resolve(server));
+    server.unref();
+  });
+  const fastStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${slow.address().port}`,
+      orderB: `http://localhost:${fastStub.address().port}`,
+      inventory: `http://localhost:${fastStub.address().port}`,
+      notification: `http://localhost:${fastStub.address().port}`,
+    });
+
+    // Fire two cycles back to back without awaiting the first — this is
+    // exactly what a slow tick + setInterval firing again would do.
+    const firstCall = poller.pollAll();
+    const secondCall = poller.pollAll();
+    await Promise.all([firstCall, secondCall]);
+
+    // If the guard failed and both cycles actually ran, order-service-a
+    // would be hit twice (once per cycle) with overlapping in-flight
+    // requests. If the guard worked, the second call skipped entirely
+    // before reaching any service, so exactly 1 request landed here.
+    assert.equal(maxConcurrent, 1, `expected no concurrent /health requests to the same service, saw ${maxConcurrent}`);
+    assert.equal(totalRequests, 1, `expected the second pollAll() call to be skipped entirely, but order-service-a was polled ${totalRequests} times`);
+  } finally {
+    slow.close();
+    fastStub.close();
+  }
+});
+
+test('chaosLock releases once the incident it was holding for resolves', async () => {
+  const incidents = installFakeDb();
+  const down = await startHealthServer({ healthy: () => false });
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${down.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${healthyStub.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+    const chaosLock = require('../src/chaosLock');
+
+    chaosLock.acquire();
+    assert.equal(chaosLock.isLocked(), true);
+
+    let incident;
+    for (let cycle = 0; cycle < 6; cycle++) {
+      await poller.pollAll();
+      incident = [...incidents.values()].find((i) => i.service_name === 'order-service-a');
+      if (incident && incident.resolved_at) break;
+    }
+
+    assert.ok(incident && incident.resolved_at, 'incident should have resolved (as Unresolved) within the loop');
+    assert.equal(chaosLock.isLocked(), false, 'lock should release once nothing is left in activeIncidents');
   } finally {
     down.close();
     healthyStub.close();

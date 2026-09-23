@@ -5,6 +5,7 @@ const { remediate, clearRateLimitFor, MAX_ATTEMPTS } = require('./remediate');
 const { notifyDiscord } = require('./discord');
 const { generatePostmortem } = require('./postmortem');
 const { consumePendingTrigger } = require('./triggerContext');
+const chaosLock = require('./chaosLock');
 
 const POLL_INTERVAL_MS = 5000;
 const FETCH_TIMEOUT_MS = 3000;
@@ -176,6 +177,13 @@ async function resolveIncident(serviceName, tracked, success) {
   activeIncidents.delete(serviceName);
   clearRateLimitFor(serviceName);
 
+  // Release the "an incident is already being investigated" lock only
+  // once nothing else is still in flight — a manual trigger and an
+  // unrelated real degradation can overlap.
+  if (activeIncidents.size === 0) {
+    chaosLock.release();
+  }
+
   let updated;
   try {
     updated = await db.updateIncident(tracked.incidentId, {
@@ -205,14 +213,45 @@ async function resolveIncident(serviceName, tracked, success) {
   }
 }
 
-async function pollAll() {
-  try {
-    await db.deleteOldSnapshots();
-  } catch (err) {
-    console.error('[poller] failed to prune old snapshots:', err.message);
-  }
+let lastPollAt = null;
+let polling = false;
 
-  await Promise.all(Object.entries(SERVICES).map(([name, url]) => pollService(name, url)));
+async function pollAll() {
+  // A slow cycle (e.g. a Groq call taking a few seconds) must not
+  // overlap with the next setInterval firing — two concurrent cycles
+  // touching the same service could double up a remediation attempt
+  // against the same incident. Skip this tick rather than run in
+  // parallel with the last one.
+  if (polling) {
+    console.error('[poller] previous poll cycle still running, skipping this tick');
+    return;
+  }
+  polling = true;
+
+  try {
+    try {
+      await db.deleteOldSnapshots();
+    } catch (err) {
+      console.error('[poller] failed to prune old snapshots:', err.message);
+    }
+
+    try {
+      await Promise.all(Object.entries(SERVICES).map(([name, url]) => pollService(name, url)));
+    } catch (err) {
+      // A single bad tick must never silently kill the setInterval —
+      // this is the "who watches the watchmen" gap: without it, a bug
+      // here would go quiet with nothing external noticing.
+      console.error('[poller] poll cycle failed unexpectedly:', err.message);
+    }
+
+    lastPollAt = new Date().toISOString();
+  } finally {
+    polling = false;
+  }
+}
+
+function getLastPollAt() {
+  return lastPollAt;
 }
 
 function start() {
@@ -220,4 +259,4 @@ function start() {
   return setInterval(pollAll, POLL_INTERVAL_MS);
 }
 
-module.exports = { start, pollAll, SERVICES };
+module.exports = { start, pollAll, getLastPollAt, SERVICES };

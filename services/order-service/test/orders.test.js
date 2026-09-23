@@ -10,6 +10,7 @@ function startMockServer(handler) {
       req.on('end', () => handler(req, res, body ? JSON.parse(body) : {}));
     });
     server.listen(0, () => resolve(server));
+    server.unref(); // never block this test file's process from exiting
   });
 }
 
@@ -32,6 +33,7 @@ async function withOrderApp(inventoryHandler, notificationHandler, run) {
   const { createApp } = require('../src/app');
   const app = createApp();
   const server = app.listen(0);
+  server.unref();
   const baseUrl = serverUrl(server);
 
   try {

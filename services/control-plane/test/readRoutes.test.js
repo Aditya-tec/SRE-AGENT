@@ -13,6 +13,7 @@ async function withApp(run) {
   app.use(incidentsRoute);
   app.use(servicesRoute);
   const server = app.listen(0);
+  server.unref();
   const baseUrl = `http://localhost:${server.address().port}`;
   try {
     await run(baseUrl);

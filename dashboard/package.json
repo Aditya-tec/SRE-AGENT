@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --test test/*.test.js"
+    "test": "node --test --test-force-exit test/*.test.js"
   },
   "dependencies": {
     "next": "^16.3.6",
