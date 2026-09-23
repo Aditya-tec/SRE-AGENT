@@ -63,35 +63,53 @@ stateDiagram-v2
 
 ## Safety guardrails
 
-Every remediation action runs through a whitelist, never free-form LLM-executed commands:
+**The single most important AI-safety property in the whole system: the LLM only ever picks from a fixed enum of remediation actions** (`restart` / `traffic_shift` / `rate_limit` / `monitor`). It never generates or executes code, shell commands, or arbitrary API calls — its entire output surface is one JSON field constrained to four known strings, executed through a whitelist dispatcher (`remediate.js`). This is a deliberate architectural choice, not an accident of scope.
+
+Everything else follows from that:
 
 - **Audit trail first.** `remediation_action` is written to the incident row *before* the action executes, so there's a record even if the action itself fails.
 - **Hard attempt cap.** Max 3 remediation attempts per incident. After that, the incident is marked `remediation_success = false` and left in a distinct `Unresolved` state (not silently retried forever) — a real production failure mode most demos don't show.
 - **Idempotent, non-destructive actions only.** `restart` and `traffic_shift` are safe to call against an already-healthy service. There is no delete, no scale-down, nothing in the whitelist that can make things worse.
 - **Duplicate-incident guard.** Before opening a new incident, the poller checks for an existing unresolved one for that service — the "don't page on-call twice for the same outage" rule.
+- **Chaos-in-progress lock.** `POST /break-it` refuses a new trigger with `409` while any incident is still being investigated (`chaosLock.js`), and separately allows only 1 trigger per IP per 5 minutes. Without this, two simultaneous visitors could stack faults on top of each other, or one visitor could keep the demo permanently broken.
 - **Diagnosis never blocks remediation.** If the Groq call errors, times out (10s), or returns unparseable JSON, diagnosis falls back to `{rootCause: "Diagnosis unavailable...", recommendedAction: "restart"}` rather than leaving an incident stuck.
+- **The gateway can't be pointed anywhere.** `POST /gateway/orders` forwards only to `ORDER_A_URL`/`ORDER_B_URL` — fixed, env-configured at startup — never to a URL derived from request input. This rules out SSRF by construction, not by validation.
+- **Dead-man's-switch on the poll loop.** Overlapping `pollAll()` cycles are guarded against (a slow tick can't run concurrently with the next scheduled one — the same mechanism that prevents a double remediation attempt on one incident), every cycle is wrapped in try/catch so one bad tick can't silently kill the `setInterval`, and `GET /health` exposes `lastPollAt` so an external monitor (e.g. UptimeRobot, free) can page if the poller itself ever goes quiet. Without this, the one component watching everything else has nothing watching it.
 
 ## Security hardening
 
 This is a public demo with an endpoint whose whole job is to inject faults — the attack surface is worth taking seriously, not hand-waving past:
 
-- **`helmet` + rate limiting on every service.** All 5 backend services set standard security headers and cap requests to 60/min/IP; the control plane adds a tighter 10/min/IP limit on `/break-it` specifically, since that's the one endpoint that makes something worse on purpose.
-- **`CHAOS_SECRET` gates the fault-injection endpoints.** `POST /chaos` on all 4 target services requires an `x-chaos-secret` header matching a shared secret once one is configured — closes off "anyone with the URL can crash the public demo forever." Left unset, it stays open for local dev. `/chaos/status` (read-only) is never gated. `POST /break-it` on the control plane stays intentionally public (it's the whole point of the demo) but is rate-limited.
+- **`helmet` + rate limiting on every service.** All 5 backend services set standard security headers and cap requests to 60/min/IP; the control plane adds a much tighter 1-per-5-min/IP limit on `/break-it` specifically (plus the chaos-in-progress lock above), since that's the one endpoint that makes something worse on purpose.
+- **`CHAOS_SECRET` gates the fault-injection endpoints.** `POST /chaos` on all 4 target services requires an `x-chaos-secret` header matching a shared secret once one is configured — closes off "anyone with the URL can crash the public demo forever." Left unset, it stays open for local dev. `/chaos/status` (read-only) is never gated. `POST /break-it` on the control plane stays intentionally public (it's the whole point of the demo) but is rate-limited and lock-guarded.
 - **Locked-down CORS.** `DASHBOARD_ORIGIN` restricts the control plane's API to the deployed dashboard's origin once set; defaults to open for local dev.
 - **Small JSON body limits (10kb)** on every service — these payloads are a few fields, nothing should ever be near that size.
 - **Defensive error handling.** Every service has a JSON error-handling middleware (never leaks Express's default HTML/stack-trace error page) and process-level `unhandledRejection`/`uncaughtException` handlers that log instead of silently dying.
 - **`npm audit --audit-level=high` runs in CI** for every service on every push — currently 0 known high/critical vulnerabilities across all 5.
-- **Secrets never reach the browser.** `SUPABASE_SERVICE_KEY`, `GROQ_API_KEY`, `RENDER_API_KEY`, and `CHAOS_SECRET` only ever live in `control-plane`'s server-side env; the dashboard only ever talks to `control-plane`'s own API.
+- **Secrets never reach the browser.** `SUPABASE_SERVICE_KEY`, `GROQ_API_KEY`, `RENDER_API_KEY`, `RENDER_SERVICE_IDS`, `DISCORD_WEBHOOK_URL`, and `CHAOS_SECRET` only ever live in `control-plane`'s server-side env; the dashboard only ever talks to `control-plane`'s own API. CI builds the dashboard and greps the output for all six names — the build fails if any of them ever show up in client-bundled code.
+- **Secrets hygiene, checked.** `git log --all -p` across the full history for every secret env var name turns up only test-fixture placeholder strings (`'dummy-test-key'`, `'s3cr3t'`, etc.) — never a real key, in any commit.
+
+### No authentication, by design
+
+There is no login, no API key, no bot detection, no CAPTCHA anywhere in this system — every read endpoint is public, and `/break-it` is public and unauthenticated on purpose. For a portfolio demo built to let a stranger click a button and watch it work, this is the correct, calibrated call, not an oversight: real defense-in-depth here (accounts, sessions, WAF rules) would be solving a problem this project doesn't have. What actually protects it is scope, not access control — a fixed action whitelist, rate limits, the chaos lock, and read-only telemetry with nothing sensitive in it. Naming that trade-off explicitly, rather than leaving a reviewer to wonder whether it was considered, is the point of this section.
+
+### Known limitations (understood, not mysteries)
+
+- **`chaosState` doesn't distinguish "why" a service is down.** A `crash` fault correctly clears itself on process restart. But if a service happens to crash for an *unrelated* reason (an unhandled exception, a Render redeploy) while a `latency` or `error_rate` fault is still active, that fault silently vanishes along with the process's in-memory state too — there's no way for a fresh process to know a fault was "supposed" to still be running. Acceptable for a demo; a real system would persist active-fault state outside the process.
+- **No idempotency key on remediation actions.** `remediate.js` has no explicit guard against a specific `(incidentId, attempt)` pair executing twice — the real protection today is that `poller.js`'s own overlap guard (see Safety guardrails above) prevents the one call path that could have caused that. If a future change adds any external trigger for remediation (a webhook, a retried API call), it should get its own idempotency key rather than relying on that guard.
+- **Groq's free-tier rate limit is shared across every simultaneous visitor.** A real traffic spike to the demo could push diagnosis calls into the fallback path more often than the real LLM path. Acceptable — the fallback is safe and honest about itself — but worth knowing if diagnoses look templated during a burst of visitors.
 
 ## Testing & CI
 
-83 automated tests across all 5 services (Node's built-in `node:test`, no test framework dependency), covering:
+90 automated tests across all 5 services (Node's built-in `node:test`, no test framework dependency), covering:
 
-- **Pure logic**: sliding-window metrics (the regression test for a real dilution bug found while building this — see the Phase 4 commit), chaos fault application/auto-clear, anomaly detection + debounce, gateway traffic-shift/rate-limit state, incident-phase derivation.
-- **Route-level integration tests**: real Express apps started on ephemeral ports, hit with real `fetch` calls — order flow (including "notification-service unreachable must not fail the order"), inventory reservation edge cases, the `CHAOS_SECRET` gate, `/break-it` validation and trigger-context wiring, the `/gateway/orders` replica routing and rate-limit rejection.
-- **The full incident state machine**, end to end, against an in-memory stubbed database and real mock HTTP servers: a permanently-down service reaching `Unresolved` after exactly 3 attempts, a service that recovers reaching `Resolved` after 2 healthy polls, and the duplicate-incident guard holding under repeated detection cycles.
+- **Pure logic**: sliding-window metrics (the regression test for a real dilution bug found while building this — see the Phase 4 commit), chaos fault application/auto-clear, anomaly detection + debounce, gateway traffic-shift/rate-limit state, the chaos-in-progress lock, incident-phase derivation.
+- **Route-level integration tests**: real Express apps started on ephemeral ports, hit with real `fetch` calls — order flow (including "notification-service unreachable must not fail the order"), inventory reservation edge cases, the `CHAOS_SECRET` gate, `/break-it` validation, trigger-context wiring, and the lock/rate-limit rejection, the `/gateway/orders` replica routing and rate-limit rejection.
+- **The full incident state machine**, end to end, against an in-memory stubbed database and real mock HTTP servers: a permanently-down service reaching `Unresolved` after exactly 3 attempts, a service that recovers reaching `Resolved` after 2 healthy polls, the duplicate-incident guard holding under repeated detection cycles, the overlap guard proving a slow cycle is never run twice concurrently, `lastPollAt` advancing each cycle, and the chaos lock releasing once its incident resolves.
 
-`.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run build` (dashboard only), and `npm audit --audit-level=high` for all 5 services on every push/PR to `main`, plus a YAML-validation job for `render.yaml` and the other workflows. Run locally: `cd <service> && npm test`.
+`.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run build` (dashboard only), a client-bundle secret-leakage check (dashboard only), and `npm audit --audit-level=high` for all 5 services on every push/PR to `main`, plus a YAML-validation job for `render.yaml`, `dependabot.yml`, and the other workflows. `.github/dependabot.yml` additionally checks all 5 `npm` projects plus the GitHub Actions themselves weekly, so CVEs disclosed *after* a deploy get caught too. Run locally: `cd <service> && npm test`.
+
+One real bug this test suite caught while building it, worth naming: `node --test` intermittently hung for minutes after all tests had already passed, because a `fetch()`-based test left an idle keep-alive socket that the test runner's own process-exit detection waited on. Fixed with `--test-force-exit` plus explicit `server.closeAllConnections()` in every test's teardown — a good example of test infrastructure flakiness that looks exactly like a product bug until you isolate it.
 
 ## How it works
 
@@ -102,10 +120,18 @@ This is a public demo with an endpoint whose whole job is to inject faults — t
 
 ## What I'd add next
 
-- Real chaos at the infrastructure level (killing a container/pod, not just an in-process fault flag) — would need a platform with that primitive on the free tier.
-- More fault types: partial network partitions, slow-DNS, clock skew.
-- Alerting integrations beyond the optional Discord webhook (PagerDuty/Opsgenie-style escalation).
-- A confidence-weighted remediation policy instead of a flat 3-attempt cap — e.g. don't retry the same action twice if the first attempt reported failure at the API level.
+In priority order — the top few are the ones I'd actually do first, not just a wishlist:
+
+1. **Confidence-weighted remediation policy** instead of the flat 3-attempt cap — `high` confidence proceeds immediately, `low` confidence defaults to `monitor` and only escalates if the anomaly persists another cycle. More realistic than a flat cap, and a better interview story.
+2. **Organic-vs-injected load distinction** — have the traffic generator occasionally burst (e.g. 5x rate, no chaos injected) and check whether diagnosis correctly reports "this looks like organic load, not a fault" instead of false-alarming. Materially harder and more impressive than anything else on this list — the single most defensible AI claim available here, because it requires the model to reason about absence of a fault, not just pattern-match a threshold breach.
+3. **A small chaos scenario library** — named multi-step scenarios (e.g. "cascading failure": `latency` on inventory-service, wait 10s, then `crash` notification-service) instead of 3 flat fault types. Tests the correlated cross-service diagnosis far more convincingly than a single fault ever does.
+4. **Historical trend charts** on the dashboard — MTTD/MTTR are currently single running averages; a line chart of MTTR per incident over time is a much better screenshot for a launch post than a static number.
+5. **A shareable read-only postmortem link** (`/incidents/:id/share`, no auth needed) for linking one striking incident directly instead of the whole dashboard.
+6. **Structured logging** (pino/winston) across all 5 services in place of `console.log`, for a real correlated log trail.
+7. **Component-level dashboard tests** (jsdom + testing-library) — the 90 tests cover `lib/` logic and Playwright covers visual/console-error checks; React component behavior itself is still untested.
+8. Real chaos at the infrastructure level (killing a container/pod, not just an in-process fault flag) — would need a platform with that primitive on the free tier.
+9. More fault types: partial network partitions, slow-DNS, clock skew.
+10. Alerting integrations beyond the optional Discord webhook (PagerDuty/Opsgenie-style escalation).
 
 ## Status
 
@@ -120,7 +146,8 @@ This is a public demo with an endpoint whose whole job is to inject faults — t
 - [x] Phase 9 — Scheduled chaos + keep-alive (workflows written and YAML-validated; live runs need Actions enabled on the deployed repo)
 - [ ] Phase 10 — Polish & metrics (needs a live system running for a day+ to accumulate real MTTD/MTTR numbers)
 - [ ] Phase 11 — Documentation & launch (this README is launch-ready except the live link)
-- [x] Hardening pass — 83 automated tests, CI (`ci.yml`) on every push/PR, `CHAOS_SECRET` gating, rate limiting, `helmet`, restricted CORS, 0 known high/critical vulnerabilities (see [Security hardening](#security-hardening) and [Testing & CI](#testing--ci))
+- [x] Hardening pass — 90 automated tests, CI (`ci.yml`) on every push/PR, `CHAOS_SECRET` gating, rate limiting, `helmet`, restricted CORS, 0 known high/critical vulnerabilities (see [Security hardening](#security-hardening) and [Testing & CI](#testing--ci))
+- [x] Phase 2 hardening — chaos-in-progress lock + tighter per-IP rate limit on `/break-it`, dead-man's-switch on the poll loop (`lastPollAt`, overlap guard, per-cycle try/catch), Dependabot, git-history secrets scan, dashboard client-bundle secret-leakage check in CI (see [Safety guardrails](#safety-guardrails) and [Security hardening](#security-hardening))
 
 Everything through Phase 9 is code-complete and tested as far as possible without external accounts — see each phase's commit message for exactly what was verified locally versus what still needs live Supabase/Groq/Render credentials to exercise for real.
 
@@ -189,6 +216,13 @@ Two workflows in `.github/workflows/`:
 - **`scheduled-chaos.yml`** — every ~2 hours, POSTs a randomly-picked service + fault type to `control-plane`'s `/break-it` with `triggerType: "autonomous"`, so the dashboard accumulates real unattended incidents. Also runnable on demand via the Actions tab (`workflow_dispatch`).
 
 Both hardcode the `https://<service-name>.onrender.com` URLs — update them if any service ended up with a different URL. No GitHub secrets needed since neither endpoint is authenticated; Actions is on by default.
+
+### 6. External monitoring for the control plane itself (recommended)
+
+`GET /health` on `control-plane` returns `lastPollAt`, the timestamp of its most recently completed poll cycle. If the poller ever dies — a bug, an unhandled edge case, a Render restart that doesn't come back — this is the only external signal that would catch it, since nothing else watches the thing that watches everything else. Point a free monitor at it:
+
+1. [UptimeRobot](https://uptimerobot.com) (or any free uptime monitor) → new monitor → `https://control-plane.onrender.com/health`, checked every 5 minutes.
+2. Use a **keyword monitor** if the tool supports it, alerting if the response does *not* contain a `lastPollAt` value updated within the last ~2 minutes — a bare "is it a 200?" check would still pass even if the poll loop silently stopped, since the HTTP server itself would still be alive.
 
 ### After deploying
 

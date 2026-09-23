@@ -1,5 +1,6 @@
 const express = require('express');
 const { recordPendingTrigger } = require('../triggerContext');
+const chaosLock = require('../chaosLock');
 
 const router = express.Router();
 
@@ -16,6 +17,10 @@ const DEFAULT_DURATION_SEC = 30;
 // All chaos flows through here (dashboard button and the scheduled
 // GitHub Action alike) so it's logged consistently in one place.
 router.post('/break-it', async (req, res) => {
+  if (chaosLock.isLocked()) {
+    return res.status(409).json({ error: 'an incident is already being investigated — try again shortly' });
+  }
+
   const { service, faultType, triggerType } = req.body || {};
 
   if (!(service in SERVICE_URLS)) {
@@ -39,6 +44,8 @@ router.post('/break-it', async (req, res) => {
   } catch (err) {
     return res.status(502).json({ error: `failed to reach ${service}: ${err.message}` });
   }
+
+  chaosLock.acquire();
 
   // The incidents row is created once the poller's debounce confirms
   // the fault, not synchronously here.

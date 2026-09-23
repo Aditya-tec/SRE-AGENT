@@ -10,6 +10,7 @@ function startMockOrderServer(status, body) {
       res.end(JSON.stringify(body));
     });
     server.listen(0, () => resolve(server));
+    server.unref(); // never block this test file's process from exiting
   });
 }
 
@@ -27,6 +28,7 @@ async function withGatewayApp(replicaAUrl, replicaBUrl, run) {
   app.use(express.json());
   app.use(gatewayRoute);
   const server = app.listen(0);
+  server.unref();
   const baseUrl = `http://localhost:${server.address().port}`;
 
   try {

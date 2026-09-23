@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "node --test --test-concurrency=1 test/*.test.js"
+    "test": "node --test --test-concurrency=1 --test-force-exit test/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

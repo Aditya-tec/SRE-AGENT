@@ -12,6 +12,7 @@ test('POST /chaos rejects an invalid fault type', async () => {
   delete process.env.CHAOS_SECRET;
   const app = freshApp();
   const server = app.listen(0);
+  server.unref();
   const { port } = server.address();
   try {
     const res = await fetch(`http://localhost:${port}/chaos`, {
@@ -29,6 +30,7 @@ test('POST /chaos is open when CHAOS_SECRET is unset, and rejects unauthorized c
   process.env.CHAOS_SECRET = 'top-secret';
   const app = freshApp();
   const server = app.listen(0);
+  server.unref();
   const { port } = server.address();
   try {
     const unauthorized = await fetch(`http://localhost:${port}/chaos`, {
@@ -54,6 +56,7 @@ test('GET /chaos/status is always readable, even with CHAOS_SECRET set', async (
   process.env.CHAOS_SECRET = 'top-secret';
   const app = freshApp();
   const server = app.listen(0);
+  server.unref();
   const { port } = server.address();
   try {
     const res = await fetch(`http://localhost:${port}/chaos/status`);

@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const poller = require('./poller');
 const incidentsRoute = require('./routes/incidents');
 const servicesRoute = require('./routes/services');
 const gatewayRoute = require('./routes/gateway');
@@ -22,10 +23,10 @@ function createApp() {
   app.use(cors(corsOptions()));
   app.use(express.json({ limit: '10kb' }));
 
-  // A generous baseline across the whole API, then a tighter limit on
-  // /break-it specifically — it's the one endpoint whose whole job is
-  // to make something worse on purpose, so it's the one worth capping
-  // hardest against being hammered.
+  // A generous baseline across the whole API, then a much tighter
+  // per-IP limit on /break-it specifically — it's the one endpoint
+  // whose whole job is to make something worse on purpose, and it's
+  // public and unauthenticated by design, so it's worth capping hard.
   app.use(
     rateLimit({
       windowMs: 60 * 1000,
@@ -36,15 +37,20 @@ function createApp() {
   );
 
   const breakItLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 10,
+    windowMs: 5 * 60 * 1000,
+    limit: 1,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'too many break-it requests, slow down' },
+    message: { error: 'you can trigger one incident every 5 minutes — try again shortly' },
   });
 
   app.get('/health', (req, res) => {
-    res.json({ status: 'healthy', service: 'control-plane', uptimeSec: Math.floor(process.uptime()) });
+    res.json({
+      status: 'healthy',
+      service: 'control-plane',
+      uptimeSec: Math.floor(process.uptime()),
+      lastPollAt: poller.getLastPollAt(),
+    });
   });
 
   app.use(incidentsRoute);

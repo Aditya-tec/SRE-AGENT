@@ -11,6 +11,7 @@ function freshApp() {
 async function withApp(run) {
   const app = freshApp();
   const server = app.listen(0);
+  server.unref();
   const { port } = server.address();
   try {
     await run(`http://localhost:${port}`);

@@ -12,6 +12,7 @@ test('POST /chaos is open when CHAOS_SECRET is unset, gated when it is set', asy
   delete process.env.CHAOS_SECRET;
   let app = freshApp();
   let server = app.listen(0);
+  server.unref();
   let port = server.address().port;
   try {
     const openRes = await fetch(`http://localhost:${port}/chaos`, {
@@ -27,6 +28,7 @@ test('POST /chaos is open when CHAOS_SECRET is unset, gated when it is set', asy
   process.env.CHAOS_SECRET = 's3cr3t';
   app = freshApp();
   server = app.listen(0);
+  server.unref();
   port = server.address().port;
   try {
     const unauthorized = await fetch(`http://localhost:${port}/chaos`, {
