@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { z } = require('zod');
 const { maybeApplyChaos } = require('../chaosState');
+const logger = require('../logger');
 
 const router = express.Router();
 const orders = new Map();
@@ -72,7 +73,7 @@ router.post('/orders', async (req, res) => {
       message: 'Your order is confirmed',
     });
   } catch (err) {
-    console.error(`[order-service] notification failed for ${orderId}:`, err.message);
+    logger.error({ err, orderId }, 'notification failed');
   }
 
   res.status(201).json(order);

@@ -1,4 +1,5 @@
 const Groq = require('groq-sdk');
+const logger = require('./logger');
 
 // See diagnose.js for why this isn't llama-3.3-70b-versatile anymore —
 // that model was retired from Groq's catalog and 404s on every call.
@@ -40,7 +41,7 @@ Postmortem generation via LLM was unavailable; this is an auto-templated summary
 
 async function generatePostmortem(incident) {
   if (!groq) {
-    console.error('[postmortem] GROQ_API_KEY not set, using templated fallback');
+    logger.warn('GROQ_API_KEY not set, using templated fallback');
     return fallbackPostmortem(incident);
   }
 
@@ -74,7 +75,7 @@ async function generatePostmortem(incident) {
     if (!text) throw new Error('empty postmortem response');
     return text;
   } catch (err) {
-    console.error('[postmortem] Groq call failed, using templated fallback:', err.message);
+    logger.error({ err }, 'Groq call failed, using templated fallback');
     return fallbackPostmortem(incident);
   }
 }

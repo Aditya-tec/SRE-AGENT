@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ router.get('/services', async (req, res) => {
       }))
     );
   } catch (err) {
-    console.error('[services] GET /services failed:', err.message);
+    logger.error({ err }, 'GET /services failed');
     res.status(500).json({ error: 'failed to list services' });
   }
 });

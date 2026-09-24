@@ -1,6 +1,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { maybeApplyChaos } = require('../chaosState');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ router.post('/notify', async (req, res) => {
   }
   const { orderId, message } = parsed.data;
 
-  console.log(`[notify] order=${orderId} message="${message}"`);
+  logger.info({ orderId, message }, 'notification sent');
   res.json({ sent: true, channel: 'email' });
 });
 

@@ -1,14 +1,15 @@
 const { createApp } = require('./app');
+const logger = require('./logger');
 
 process.on('unhandledRejection', (err) => {
-  console.error('[order-service] unhandled rejection:', err);
+  logger.error({ err }, 'unhandled rejection');
 });
 process.on('uncaughtException', (err) => {
-  console.error('[order-service] uncaught exception:', err);
+  logger.error({ err }, 'uncaught exception');
 });
 
 const app = createApp();
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`order-service (replica ${process.env.REPLICA_ID || 'a'}) listening on port ${PORT}`);
+  logger.info({ port: PORT, replicaId: process.env.REPLICA_ID || 'a' }, 'order-service listening');
 });

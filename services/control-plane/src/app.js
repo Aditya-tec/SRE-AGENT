@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const poller = require('./poller');
+const logger = require('./logger');
 const incidentsRoute = require('./routes/incidents');
 const servicesRoute = require('./routes/services');
 const gatewayRoute = require('./routes/gateway');
@@ -84,7 +85,7 @@ function createApp() {
   app.use(metricsRoute);
 
   app.use((err, req, res, next) => {
-    console.error('[control-plane] unhandled error:', err.message);
+    logger.error({ err }, 'unhandled error');
     res.status(err.status || 500).json({ error: 'internal server error' });
   });
 

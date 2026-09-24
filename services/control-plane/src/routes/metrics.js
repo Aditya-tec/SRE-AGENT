@@ -1,5 +1,6 @@
 const express = require('express');
 const { buildMetricsText } = require('../metrics');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ router.get('/metrics', async (req, res) => {
     res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
     res.send(text);
   } catch (err) {
-    console.error('[metrics] GET /metrics failed:', err.message);
+    logger.error({ err }, 'GET /metrics failed');
     res.status(500).json({ error: 'failed to build metrics' });
   }
 });

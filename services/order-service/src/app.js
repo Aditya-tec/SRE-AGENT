@@ -6,6 +6,7 @@ const healthRoute = require('./routes/health');
 const metricsRoute = require('./routes/metrics');
 const ordersRoute = require('./routes/orders');
 const chaosRoute = require('./routes/chaos');
+const logger = require('./logger');
 
 function createApp() {
   const app = express();
@@ -36,7 +37,7 @@ function createApp() {
   // Malformed JSON bodies, etc. should return a JSON error, not
   // Express's default HTML error page.
   app.use((err, req, res, next) => {
-    console.error('[order-service] unhandled error:', err.message);
+    logger.error({ err }, 'unhandled error');
     res.status(err.status || 500).json({ error: 'internal server error' });
   });
 
