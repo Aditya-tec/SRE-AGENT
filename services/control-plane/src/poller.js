@@ -162,6 +162,7 @@ async function openIncident(serviceName, evaluation) {
       root_cause: diagnosis.rootCause,
       raw_context: diagnosis.context,
       diagnosed_at: new Date().toISOString(),
+      confidence: diagnosis.confidence,
     });
 
     console.log(

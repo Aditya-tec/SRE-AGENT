@@ -3,13 +3,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import ServiceHealthGrid from '../components/ServiceHealthGrid';
 import MetricsSummary from '../components/MetricsSummary';
+import ConfidenceCalibration from '../components/ConfidenceCalibration';
 import BreakItButton from '../components/BreakItButton';
 import IncidentTimeline from '../components/IncidentTimeline';
-import { getServices, getIncidents } from '../lib/api';
+import { getServices, getIncidents, getConfidenceReport } from '../lib/api';
 
 export default function DashboardPage() {
   const [services, setServices] = useState([]);
   const [incidents, setIncidents] = useState([]);
+  const [confidenceReport, setConfidenceReport] = useState(null);
   const [error, setError] = useState(null);
 
   const refreshServices = useCallback(async () => {
@@ -27,6 +29,13 @@ export default function DashboardPage() {
       setError(null);
     } catch (err) {
       setError(err.message);
+    }
+    // Best-effort — the confidence report is a secondary panel, not
+    // worth surfacing its own error banner or blocking the main view.
+    try {
+      setConfidenceReport(await getConfidenceReport());
+    } catch {
+      // leave the last-known report in place
     }
   }, []);
 
@@ -73,6 +82,11 @@ export default function DashboardPage() {
       <section className="mb-8">
         <h2 className="mb-3 text-xs uppercase tracking-wide text-ink-muted">Track Record</h2>
         <MetricsSummary incidents={incidents} />
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-xs uppercase tracking-wide text-ink-muted">Confidence Calibration</h2>
+        <ConfidenceCalibration report={confidenceReport} />
       </section>
 
       <section>

@@ -40,3 +40,7 @@ export function breakItScenario(scenario) {
 export function approveIncident(id) {
   return apiFetch(`/incidents/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 }
+
+export function getConfidenceReport() {
+  return apiFetch('/confidence-report');
+}

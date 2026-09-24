@@ -87,6 +87,32 @@ paths:
                     type: boolean
         '400':
           $ref: '#/components/responses/Error'
+  /confidence-report:
+    get:
+      summary: >-
+        Success rate of auto-remediation, broken down by the diagnosis
+        confidence level that recommended it
+      responses:
+        '200':
+          description: Per-confidence-level totals and success rate
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    total:
+                      type: integer
+                    resolved:
+                      type: integer
+                    succeeded:
+                      type: integer
+                    successRate:
+                      type: number
+                      nullable: true
+        '500':
+          $ref: '#/components/responses/Error'
   /break-it:
     post:
       summary: Inject a fault (or named multi-step scenario)

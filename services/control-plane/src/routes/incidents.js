@@ -42,4 +42,34 @@ router.post('/incidents/:id/approve', async (req, res) => {
   res.json({ approved: true });
 });
 
+// A flat top-level path, not /incidents/confidence-report — Express
+// would match that against the /incidents/:id route above first and
+// treat "confidence-report" as an id.
+const CONFIDENCE_LEVELS = ['high', 'medium', 'low'];
+// Internal aggregate query, not the public ?limit= path — this report
+// is only useful over the full incident history, not the last 200.
+const CONFIDENCE_REPORT_SAMPLE_SIZE = 5000;
+
+router.get('/confidence-report', async (req, res) => {
+  try {
+    const incidents = await db.listIncidents(CONFIDENCE_REPORT_SAMPLE_SIZE);
+    const report = {};
+    for (const level of CONFIDENCE_LEVELS) {
+      const atLevel = incidents.filter((i) => i.confidence === level);
+      const resolved = atLevel.filter((i) => i.resolved_at);
+      const succeeded = resolved.filter((i) => i.remediation_success === true);
+      report[level] = {
+        total: atLevel.length,
+        resolved: resolved.length,
+        succeeded: succeeded.length,
+        successRate: resolved.length > 0 ? succeeded.length / resolved.length : null,
+      };
+    }
+    res.json(report);
+  } catch (err) {
+    console.error('[incidents] GET /confidence-report failed:', err.message);
+    res.status(500).json({ error: 'failed to build confidence report' });
+  }
+});
+
 module.exports = router;

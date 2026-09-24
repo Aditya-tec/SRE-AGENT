@@ -43,7 +43,8 @@ db.exec(`
     postmortem TEXT,
     raw_context TEXT,
     is_flapping INTEGER NOT NULL DEFAULT 0,
-    awaiting_approval INTEGER NOT NULL DEFAULT 0
+    awaiting_approval INTEGER NOT NULL DEFAULT 0,
+    confidence TEXT
   );
 
   CREATE TABLE IF NOT EXISTS metrics_snapshots (
@@ -70,6 +71,9 @@ if (!incidentColumns.includes('is_flapping')) {
 }
 if (!incidentColumns.includes('awaiting_approval')) {
   db.exec('ALTER TABLE incidents ADD COLUMN awaiting_approval INTEGER NOT NULL DEFAULT 0');
+}
+if (!incidentColumns.includes('confidence')) {
+  db.exec('ALTER TABLE incidents ADD COLUMN confidence TEXT');
 }
 
 function toIncidentRow(fields) {
@@ -170,12 +174,13 @@ async function insertIncident(incident) {
     raw_context: null,
     is_flapping: false,
     awaiting_approval: false,
+    confidence: null,
     ...incident,
     id,
   });
   db.prepare(
-    `INSERT INTO incidents (id, service_name, trigger_type, fault_type, detected_at, diagnosed_at, remediated_at, resolved_at, root_cause, remediation_action, remediation_success, postmortem, raw_context, is_flapping, awaiting_approval)
-     VALUES (@id, @service_name, @trigger_type, @fault_type, @detected_at, @diagnosed_at, @remediated_at, @resolved_at, @root_cause, @remediation_action, @remediation_success, @postmortem, @raw_context, @is_flapping, @awaiting_approval)`
+    `INSERT INTO incidents (id, service_name, trigger_type, fault_type, detected_at, diagnosed_at, remediated_at, resolved_at, root_cause, remediation_action, remediation_success, postmortem, raw_context, is_flapping, awaiting_approval, confidence)
+     VALUES (@id, @service_name, @trigger_type, @fault_type, @detected_at, @diagnosed_at, @remediated_at, @resolved_at, @root_cause, @remediation_action, @remediation_success, @postmortem, @raw_context, @is_flapping, @awaiting_approval, @confidence)`
   ).run(row);
   return getIncident(id);
 }
