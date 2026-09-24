@@ -19,6 +19,12 @@ const VERIFY_HEALTHY_CYCLES = 2;
 const FLAPPING_WINDOW_MS = 10 * 60 * 1000;
 const FLAPPING_THRESHOLD_COUNT = 3;
 
+// Default true (unchanged auto-execute behavior) — only an explicit
+// "false" pauses remediation for a human to approve via POST
+// /incidents/:id/approve. Anything else set (typos included) stays
+// on the safe/current side rather than silently disabling autonomy.
+const AUTO_REMEDIATE = process.env.AUTO_REMEDIATE !== 'false';
+
 const SERVICES = {
   'order-service-a': process.env.ORDER_A_URL || 'http://localhost:3001',
   'order-service-b': process.env.ORDER_B_URL || 'http://localhost:3011',
@@ -168,6 +174,15 @@ async function openIncident(serviceName, evaluation) {
       tracked.recommendedAction = diagnosis.recommendedAction;
     }
 
+    if (!AUTO_REMEDIATE) {
+      if (tracked) tracked.awaitingApproval = true;
+      await db.updateIncident(incident.id, { awaiting_approval: true });
+      console.log(
+        `[poller] incident ${incident.id} awaiting approval (AUTO_REMEDIATE=false) — recommends ${diagnosis.recommendedAction}`
+      );
+      return;
+    }
+
     // Confidence-weighted: low -> monitor first and only escalate if the
     // anomaly is still there next poll; high/medium -> act immediately.
     const initialAction =
@@ -211,6 +226,14 @@ async function progressIncident(serviceName, evaluation) {
 
   tracked.consecutiveHealthy = 0;
 
+  if (tracked.awaitingApproval) {
+    // Paused for a human decision — don't escalate or burn attempts
+    // toward MAX_ATTEMPTS while waiting. approveIncident() is the only
+    // path back into normal remediation from here. The service can
+    // still resolve on its own above (a real recovery isn't gated).
+    return;
+  }
+
   if (tracked.attempts >= MAX_ATTEMPTS) {
     await resolveIncident(serviceName, tracked, false);
     return;
@@ -240,6 +263,36 @@ async function progressIncident(serviceName, evaluation) {
       await resolveIncident(serviceName, tracked, false);
     }
   }
+}
+
+// Called from POST /incidents/:id/approve. Finds the in-memory tracked
+// entry by incident id (activeIncidents is keyed by service name, not
+// incident id, since only one incident is ever open per service) and
+// runs the diagnosis's recommended action — the same escalation choice
+// progressIncident would have made automatically if AUTO_REMEDIATE
+// hadn't paused it.
+async function approveIncident(incidentId) {
+  const entry = [...activeIncidents.entries()].find(([, tracked]) => tracked.incidentId === incidentId);
+  if (!entry) {
+    return { ok: false, error: 'no active incident with that id' };
+  }
+  const [serviceName, tracked] = entry;
+  if (!tracked.awaitingApproval) {
+    return { ok: false, error: 'incident is not awaiting approval' };
+  }
+
+  tracked.awaitingApproval = false;
+  try {
+    await db.updateIncident(incidentId, { awaiting_approval: false });
+  } catch (err) {
+    console.error(`[poller] failed to clear awaiting_approval for incident ${incidentId}:`, err.message);
+  }
+
+  const action =
+    tracked.recommendedAction && tracked.recommendedAction !== 'monitor' ? tracked.recommendedAction : 'restart';
+  console.log(`[poller] incident ${incidentId} approved — executing ${action}`);
+  await attemptRemediation(serviceName, { id: incidentId, service_name: serviceName }, action);
+  return { ok: true };
 }
 
 async function resolveIncident(serviceName, tracked, success) {
@@ -365,4 +418,4 @@ function start() {
   return setInterval(pollAll, POLL_INTERVAL_MS);
 }
 
-module.exports = { start, pollAll, getLastPollAt, SERVICES };
+module.exports = { start, pollAll, getLastPollAt, SERVICES, approveIncident };

@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import StatusBadge from '../../../components/StatusBadge';
-import { getIncident } from '../../../lib/api';
+import { getIncident, approveIncident } from '../../../lib/api';
 import { getIncidentPhase, PHASE_LABELS, PHASE_TONE } from '../../../lib/incidentPhase';
 import { formatDuration, formatTimestamp } from '../../../lib/format';
 
@@ -13,6 +13,8 @@ export default function IncidentDetailPage() {
   const params = useParams();
   const [incident, setIncident] = useState(null);
   const [error, setError] = useState(null);
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -32,6 +34,19 @@ export default function IncidentDetailPage() {
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
   }, [incident, refresh]);
+
+  async function handleApprove() {
+    setApproving(true);
+    setApproveError(null);
+    try {
+      await approveIncident(incident.id);
+      await refresh();
+    } catch (err) {
+      setApproveError(err.message);
+    } finally {
+      setApproving(false);
+    }
+  }
 
   if (error) {
     return (
@@ -123,6 +138,29 @@ export default function IncidentDetailPage() {
         <div className="mt-6 rounded-lg border p-4" style={{ borderColor: 'rgba(57,135,229,0.4)', backgroundColor: 'rgba(57,135,229,0.1)' }}>
           <h2 className="text-xs uppercase tracking-wide text-ink-muted">Root Cause</h2>
           <p className="mt-2 text-sm text-ink-primary">{incident.root_cause}</p>
+        </div>
+      )}
+
+      {phase === 'awaiting_approval' && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4" style={{ borderColor: 'var(--status-serious)', backgroundColor: 'rgba(236,131,90,0.1)' }}>
+          <div>
+            <h2 className="text-xs uppercase tracking-wide text-ink-muted">Autonomy paused</h2>
+            <p className="mt-1 text-sm text-ink-primary">
+              AUTO_REMEDIATE is off — this incident is diagnosed but remediation is on hold until approved.
+            </p>
+            {approveError && (
+              <p className="mt-1 text-sm" style={{ color: 'var(--status-critical)' }}>
+                {approveError}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={handleApprove}
+            disabled={approving}
+            className="shrink-0 rounded-md bg-critical px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+          >
+            {approving ? 'Approving…' : 'Approve remediation'}
+          </button>
         </div>
       )}
 

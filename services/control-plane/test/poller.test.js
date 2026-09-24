@@ -233,6 +233,51 @@ test('flapping: a service that opens 3 incidents within the window gets the 3rd 
   }
 });
 
+test('AUTO_REMEDIATE=false pauses at awaiting_approval instead of auto-executing, and approveIncident() resumes it', async () => {
+  process.env.AUTO_REMEDIATE = 'false';
+  const incidents = installFakeDb();
+  const down = await startHealthServer({ healthy: () => false });
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${down.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${healthyStub.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+
+    let incident;
+    for (let cycle = 0; cycle < 4 && !incident?.diagnosed_at; cycle++) {
+      await poller.pollAll();
+      incident = [...incidents.values()].find((i) => i.service_name === 'order-service-a');
+    }
+    assert.ok(incident?.diagnosed_at, 'incident should be diagnosed');
+    assert.equal(incident.awaiting_approval, true);
+    assert.equal(incident.remediated_at, undefined, 'must not auto-remediate while paused for approval');
+
+    // Keep polling while the fault persists — must stay paused, not
+    // escalate toward MAX_ATTEMPTS or flip to Unresolved on its own.
+    for (let cycle = 0; cycle < 4; cycle++) {
+      await poller.pollAll();
+    }
+    const stillWaiting = incidents.get(incident.id);
+    assert.equal(stillWaiting.awaiting_approval, true);
+    assert.equal(stillWaiting.remediated_at, undefined);
+    assert.equal(stillWaiting.resolved_at, undefined, 'must not resolve as Unresolved while paused for approval');
+
+    const result = await poller.approveIncident(incident.id);
+    assert.equal(result.ok, true);
+    const approved = incidents.get(incident.id);
+    assert.equal(approved.awaiting_approval, false);
+    assert.ok(approved.remediated_at, 'approving should execute the recommended remediation action');
+  } finally {
+    delete process.env.AUTO_REMEDIATE;
+    down.close();
+    healthyStub.close();
+  }
+});
+
 test('duplicate-incident guard: only one open incident per service at a time', async () => {
   const incidents = installFakeDb();
   const down = await startHealthServer({ healthy: () => false });

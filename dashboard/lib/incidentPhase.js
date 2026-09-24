@@ -7,6 +7,7 @@ export function getIncidentPhase(incident) {
     return incident.remediation_success ? 'resolved' : 'unresolved';
   }
   if (incident.remediated_at) return 'verifying';
+  if (incident.awaiting_approval) return 'awaiting_approval';
   if (incident.diagnosed_at) return 'remediating';
   return 'diagnosing';
 }
@@ -15,6 +16,7 @@ export const PHASE_LABELS = {
   diagnosing: 'Diagnosing',
   remediating: 'Remediating',
   verifying: 'Verifying',
+  awaiting_approval: 'Awaiting Approval',
   resolved: 'Resolved',
   unresolved: 'Unresolved',
 };
@@ -23,6 +25,7 @@ export const PHASE_TONE = {
   diagnosing: 'warning',
   remediating: 'warning',
   verifying: 'warning',
+  awaiting_approval: 'serious',
   resolved: 'good',
   unresolved: 'critical',
 };

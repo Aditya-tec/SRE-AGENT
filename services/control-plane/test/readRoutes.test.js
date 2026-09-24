@@ -7,9 +7,11 @@ const express = require('express');
 const db = require('../src/db');
 const incidentsRoute = require('../src/routes/incidents');
 const servicesRoute = require('../src/routes/services');
+const poller = require('../src/poller');
 
 async function withApp(run) {
   const app = express();
+  app.use(express.json());
   app.use(incidentsRoute);
   app.use(servicesRoute);
   const server = app.listen(0);
@@ -60,6 +62,29 @@ test('GET /incidents/:id returns the incident when found', async () => {
     const res = await fetch(`${baseUrl}/incidents/inc_42`);
     assert.equal(res.status, 200);
     assert.equal((await res.json()).service_name, 'inventory-service');
+  });
+});
+
+test('POST /incidents/:id/approve delegates to poller.approveIncident and returns its result', async () => {
+  let calledWith;
+  poller.approveIncident = async (id) => {
+    calledWith = id;
+    return { ok: true };
+  };
+  await withApp(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/incidents/inc_42/approve`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { approved: true });
+    assert.equal(calledWith, 'inc_42');
+  });
+});
+
+test('POST /incidents/:id/approve returns 400 when there is nothing to approve', async () => {
+  poller.approveIncident = async () => ({ ok: false, error: 'no active incident with that id' });
+  await withApp(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/incidents/inc_99/approve`, { method: 'POST' });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'no active incident with that id');
   });
 });
 

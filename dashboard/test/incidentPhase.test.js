@@ -14,6 +14,20 @@ test('remediated but not resolved is verifying', () => {
   assert.equal(getIncidentPhase({ detected_at: 't0', diagnosed_at: 't1', remediated_at: 't2' }), 'verifying');
 });
 
+test('diagnosed and awaiting_approval, not yet remediated, is awaiting_approval', () => {
+  assert.equal(
+    getIncidentPhase({ detected_at: 't0', diagnosed_at: 't1', awaiting_approval: true }),
+    'awaiting_approval'
+  );
+});
+
+test('remediated_at set takes priority over awaiting_approval (approval already happened)', () => {
+  assert.equal(
+    getIncidentPhase({ detected_at: 't0', diagnosed_at: 't1', awaiting_approval: true, remediated_at: 't2' }),
+    'verifying'
+  );
+});
+
 test('resolved with remediation_success=true is resolved', () => {
   assert.equal(
     getIncidentPhase({ detected_at: 't0', diagnosed_at: 't1', remediated_at: 't2', resolved_at: 't3', remediation_success: true }),

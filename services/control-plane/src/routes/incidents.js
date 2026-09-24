@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const poller = require('../poller');
 
 const router = express.Router();
 
@@ -29,6 +30,16 @@ router.get('/incidents/:id', async (req, res) => {
     console.error(`[incidents] GET /incidents/${req.params.id} failed:`, err.message);
     res.status(500).json({ error: 'failed to fetch incident' });
   }
+});
+
+// Only meaningful when AUTO_REMEDIATE=false paused this incident at
+// "awaiting approval" instead of auto-executing the diagnosed action.
+router.post('/incidents/:id/approve', async (req, res) => {
+  const result = await poller.approveIncident(req.params.id);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ approved: true });
 });
 
 module.exports = router;
