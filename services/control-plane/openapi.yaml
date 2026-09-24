@@ -113,6 +113,18 @@ paths:
                       nullable: true
         '500':
           $ref: '#/components/responses/Error'
+  /metrics:
+    get:
+      summary: Prometheus-format metrics export
+      responses:
+        '200':
+          description: Text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          $ref: '#/components/responses/Error'
   /query:
     post:
       summary: Ask a natural-language question about current status/incidents
