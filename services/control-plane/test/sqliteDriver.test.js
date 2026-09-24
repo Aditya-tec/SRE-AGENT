@@ -130,6 +130,25 @@ test('countRecentIncidents counts only incidents for that service at/after the c
   assert.equal(count, 2);
 });
 
+test('confidence defaults to null and round-trips as plain text', async () => {
+  const db = freshDriver();
+  await db.upsertService('order-service-a', { status: 'degraded' });
+
+  const undiagnosed = await db.insertIncident({
+    service_name: 'order-service-a',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:00:00.000Z',
+  });
+  assert.equal(undiagnosed.confidence, null);
+
+  const updated = await db.updateIncident(undiagnosed.id, { confidence: 'high' });
+  assert.equal(updated.confidence, 'high');
+
+  const fetched = await db.getIncident(undiagnosed.id);
+  assert.equal(fetched.confidence, 'high');
+});
+
 test('getUnresolvedIncident finds an open incident and ignores resolved ones', async () => {
   const db = freshDriver();
   await db.upsertService('notification-service', { status: 'healthy' });

@@ -88,6 +88,27 @@ test('POST /incidents/:id/approve returns 400 when there is nothing to approve',
   });
 });
 
+test('GET /confidence-report aggregates success rate per confidence level', async () => {
+  db.listIncidents = async () => [
+    { confidence: 'high', resolved_at: 't1', remediation_success: true },
+    { confidence: 'high', resolved_at: 't2', remediation_success: true },
+    { confidence: 'high', resolved_at: 't3', remediation_success: false },
+    { confidence: 'high', resolved_at: null, remediation_success: null }, // still open — excluded from the rate
+    { confidence: 'medium', resolved_at: 't4', remediation_success: false },
+    { confidence: 'low', resolved_at: null, remediation_success: null }, // never resolved
+    { confidence: null, resolved_at: 't5', remediation_success: true }, // pre-dates confidence tracking — ignored
+  ];
+  await withApp(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/confidence-report`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      high: { total: 4, resolved: 3, succeeded: 2, successRate: 2 / 3 },
+      medium: { total: 1, resolved: 1, succeeded: 0, successRate: 0 },
+      low: { total: 1, resolved: 0, succeeded: 0, successRate: null },
+    });
+  });
+});
+
 test('a DB error surfaces as 500 rather than crashing the process', async () => {
   db.listServices = async () => {
     throw new Error('connection refused');
