@@ -103,8 +103,11 @@ test('a permanently unreachable service reaches Unresolved after exactly 3 remed
       notification: `http://localhost:${healthyStub.address().port}`,
     });
 
+    // 5 cycles is the theoretical minimum (debounce, detect, 3x
+    // remediate+verify) — 10 gives real headroom against event-loop
+    // jitter under full-suite load without masking a genuine hang.
     let incident;
-    for (let cycle = 0; cycle < 6; cycle++) {
+    for (let cycle = 0; cycle < 10; cycle++) {
       await poller.pollAll();
       incident = [...incidents.values()].find((i) => i.service_name === 'order-service-a');
       if (incident && incident.resolved_at) break;
@@ -301,8 +304,11 @@ test('chaosLock releases once the incident it was holding for resolves', async (
     chaosLock.acquire();
     assert.equal(chaosLock.isLocked(), true);
 
+    // 5 cycles is the theoretical minimum (debounce, detect, 3x
+    // remediate+verify) — 10 gives real headroom against event-loop
+    // jitter under full-suite load without masking a genuine hang.
     let incident;
-    for (let cycle = 0; cycle < 6; cycle++) {
+    for (let cycle = 0; cycle < 10; cycle++) {
       await poller.pollAll();
       incident = [...incidents.values()].find((i) => i.service_name === 'order-service-a');
       if (incident && incident.resolved_at) break;

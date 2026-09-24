@@ -88,6 +88,10 @@ This is a public demo with an endpoint whose whole job is to inject faults — t
 - **`npm audit --audit-level=high` runs in CI** for every service on every push — currently 0 known high/critical vulnerabilities across all 5.
 - **Secrets never reach the browser.** `SUPABASE_SERVICE_KEY`, `GROQ_API_KEY`, `RENDER_API_KEY`, `RENDER_SERVICE_IDS`, `DISCORD_WEBHOOK_URL`, and `CHAOS_SECRET` only ever live in `control-plane`'s server-side env; the dashboard only ever talks to `control-plane`'s own API. CI builds the dashboard and greps the output for all six names — the build fails if any of them ever show up in client-bundled code.
 - **Secrets hygiene, checked.** `git log --all -p` across the full history for every secret env var name turns up only test-fixture placeholder strings (`'dummy-test-key'`, `'s3cr3t'`, etc.) — never a real key, in any commit.
+- **`hasOwnProperty`, not the `in` operator, for every user-input allowlist check.** `service in SERVICE_URLS` (control-plane's `/break-it`) and `item in stock` (inventory-service's `/reserve`) both also match inherited `Object.prototype` keys — a request with `"service": "constructor"` or `"item": "toString"` passed the intended allowlist check and went on to index the lookup object with it. Fixed by switching both to `Object.prototype.hasOwnProperty.call(...)`.
+- **Constant-time comparison for `CHAOS_SECRET`.** The `x-chaos-secret` check on all 4 target services used a plain `===`, which leaks how many leading bytes matched through response timing. Switched to `crypto.timingSafeEqual` (with an explicit length check first, since it throws on mismatched lengths rather than returning `false`).
+- **Bounded query/body inputs.** `/incidents?limit=` is capped server-side (200) instead of trusting whatever a caller passes straight through to the DB; `/chaos`'s `durationSec` is capped at 300s so a malformed or hostile request can't hold a service degraded indefinitely.
+- **No raw error messages to the client.** `/incidents` and `/services` returned `err.message` straight from an unexpected DB/driver failure — now logged server-side and replaced with a generic message in the response, so a driver-internal error string is never a caller-visible information leak.
 
 ### No authentication, by design
 
@@ -148,8 +152,55 @@ In priority order — the top few are the ones I'd actually do first, not just a
 - [ ] Phase 11 — Documentation & launch (this README is launch-ready except the live link)
 - [x] Hardening pass — 90 automated tests, CI (`ci.yml`) on every push/PR, `CHAOS_SECRET` gating, rate limiting, `helmet`, restricted CORS, 0 known high/critical vulnerabilities (see [Security hardening](#security-hardening) and [Testing & CI](#testing--ci))
 - [x] Phase 2 hardening — chaos-in-progress lock + tighter per-IP rate limit on `/break-it`, dead-man's-switch on the poll loop (`lastPollAt`, overlap guard, per-cycle try/catch), Dependabot, git-history secrets scan, dashboard client-bundle secret-leakage check in CI (see [Safety guardrails](#safety-guardrails) and [Security hardening](#security-hardening))
+- [x] Local dev mode — pluggable SQLite/Supabase storage driver, one-command `npm run dev:all` (no external accounts, no `.env` setup), `npm run seed:demo` populating real incident history end to end, verified against the live API (see [Local dev mode](#local-dev-mode--zero-external-accounts))
 
 Everything through Phase 9 is code-complete and tested as far as possible without external accounts — see each phase's commit message for exactly what was verified locally versus what still needs live Supabase/Groq/Render credentials to exercise for real.
+
+## Local dev mode — zero external accounts
+
+The full detect → diagnose → remediate → resolve loop runs entirely on this machine — no Supabase, Groq, Render, or Vercel account required. Useful for developing against the real system, or for a live walkthrough without waiting on a cloud deploy.
+
+### Pluggable storage driver
+
+`STORAGE_DRIVER` on `control-plane`: `"sqlite"` (local dev) or `"supabase"` (the default — matches every deployed instance today exactly, since existing deploys don't set this var at all). Behind `db.js`, two drivers implement the identical interface (`upsertService`, `listServices`, `insertMetricsSnapshot`, `deleteOldSnapshots`, `getRecentSnapshots`, `getUnresolvedIncident`, `insertIncident`, `updateIncident`, `listIncidents`, `getIncident`) — everything else in the codebase (`poller.js`, `diagnose.js`, `remediate.js`, the routes) is unchanged by which one is active. This is a deliberate dependency-inversion choice: business logic depends on an abstract storage interface, never on Supabase specifically, so swapping the backing store never touches the code that uses it — flipping `STORAGE_DRIVER` back to `supabase` once a real project exists needs no code changes outside `db.js`.
+
+The SQLite driver (`src/db/sqliteDriver.js`, via `better-sqlite3`) mirrors `supabase/schema.sql` with straightforward type translation — `uuid` → `TEXT` (`crypto.randomUUID()`), `jsonb` → `TEXT` (`JSON.stringify`/`parse`), `timestamptz` → `TEXT` ISO strings, `boolean` → `INTEGER` 0/1 — and replicates Supabase's partial-upsert semantics exactly: `upsertService` only `SET`s the columns present in the payload, so the poller omitting `last_seen_at` on an unreachable poll doesn't null out the last-known value. Data lives in `services/control-plane/data/local.db` (gitignored).
+
+### One-command startup
+
+```
+npm install           # once, at the repo root — installs concurrently + cross-env
+npm run install:all    # once — installs all 5 services + the dashboard
+npm run dev:all
+```
+
+Boots all 5 backend services + the dashboard together on fixed ports (`order-service-a` 3001, `order-service-b` 3011, `inventory-service` 3002, `notification-service` 3003, `control-plane` 3000, `dashboard` 3006), with `STORAGE_DRIVER=sqlite` and no `GROQ_API_KEY` — diagnosis and postmortem generation exercise their real, already-tested fallback paths rather than requiring a Groq key. No `.env` files needed for this mode; every var `dev:all` needs is set inline by its own npm scripts.
+
+The 4 target services run under `scripts/supervise.js`, a minimal stand-in for Render's auto-restart (nothing else on a local machine brings a crashed process back). It waits 12 seconds before restarting a crashed service — deliberately longer than 2 poll cycles (10s), which matters: an earlier 1-second restart delay let the supervisor bring a service back *faster than the poller could ever see it down*, so some `crash` faults were silently missed by detection entirely. 12s reliably gives the poller's debounce at least 2 down-polls to work with, while still recovering far faster than Render's real ~30-50s cold start.
+
+### Seeding realistic demo data
+
+```
+npm run seed:demo
+```
+
+Runs `scripts/seed-demo.js`: the full 4-service × 3-fault-type matrix (12 scenarios) back-to-back against the running stack, through the real `POST /break-it` path — the same one the dashboard's Break-It button and the scheduled GitHub Action use, respecting the chaos-in-progress lock rather than bypassing it. Expect several minutes total: each scenario waits for its *own* new incident to actually resolve (verified against real incident rows, not just "nothing is currently unresolved" — that check is vacuously true before anything has even been detected, which silently masked several real bugs found and fixed while building this) before moving to the next. A `latency`/`error_rate` fault genuinely can't be fixed by "restart" in local dev (there's no process for it to kill), so it may cycle through a couple of detect → exhaust-3-attempts → cooldown rounds before its own duration timer clears it — a known, honest limitation, not a hidden failure. Afterward the dashboard has a real, populated incident history with genuine MTTD/MTTR/success-rate numbers instead of an empty first-load state.
+
+Three real, non-obvious bugs surfaced and got fixed while building this local-dev path — worth naming since they're the kind that only show up under sustained, repeated chaos rather than a single manual test:
+
+- The synthetic traffic generator awaited each request's full completion before scheduling the next — during a latency fault, that self-throttled it to roughly one request per fault duration, starving the very anomaly it exists to make detectable. Fixed by firing on a fixed schedule regardless of in-flight requests (matching how real traffic behaves).
+- `order-service`'s own timeout calling `inventory-service` (5000ms) was set exactly at chaos's max latency delay (also 5000ms) — a real race where the caller could abort before the callee ever finished, so the callee's own metrics never recorded the slow request at all. Fixed by giving the caller comfortable headroom (8000ms).
+- The anomaly detector's debounce counter is independent of the incident tracker and never reset on its own — so a fault that outlived its 3 remediation attempts (which fail fast, since "restart" can't fix it locally) reopened a *new* incident on the very next poll, before the underlying problem had any chance to actually clear. Fixed with an explicit debounce reset on every incident resolution.
+
+### Verified
+
+`npm run dev:all` reliably brings up all 6 services and stays stable; `npm run seed:demo` run against it end to end, confirmed via the real API (not just script output) that genuine incidents open, get diagnosed (fallback path), remediated, and reach `Resolved` or `Unresolved` — including the correlated-diagnosis case (a fault on `inventory-service` also opening a downstream-symptom incident on `order-service-a`). One full local run: 10/12 scenarios fully resolved within the script's observation window, 18 total incidents recorded (the extra 6 are correlated downstream-symptom incidents, not failures of the seeding logic), all 18 reached a terminal state, split roughly evenly between `Resolved` (crash faults, which `restart` genuinely fixes locally) and `Unresolved` (latency/error_rate faults, which `restart` can't fix without a real process to kill — an honest, expected limitation of local dev, not a bug).
+
+Fresh dashboard screenshots taken against this real local run, not a mock:
+
+![Dashboard overview — service health, MTTD/MTTR/success-rate, incident timeline](docs/screenshots/dashboard-main.png)
+
+![Incident detail view — timeline, root cause, auto-generated postmortem](docs/screenshots/dashboard-incident.png)
 
 ## Deployment
 
@@ -172,7 +223,7 @@ curl -X POST localhost:3001/orders -H "Content-Type: application/json" -d '{"ite
 
 `services/control-plane` polls all 4 target services every 5s, writes to Supabase, and opens an incident once an anomaly persists for 2 consecutive polls. It requires `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` to start (see below) and defaults its target URLs to `localhost:3001/3011/3002/3003` for local dev (3011 is where a local `order-service-b` would run, e.g. `PORT=3011 REPLICA_ID=b npm run dev`).
 
-On startup it also runs a synthetic traffic generator (a random order every 2-4s through its own `POST /gateway/orders`) so the anomaly detector always has real request volume to measure against, and the incident state machine described above.
+On startup it also runs a synthetic traffic generator (a random order every 1-2s through its own `POST /gateway/orders`) so the anomaly detector always has real request volume to measure against, and the incident state machine described above.
 
 ### 2. Supabase
 

@@ -28,7 +28,11 @@ router.post('/reserve', async (req, res) => {
     return res.status(400).json({ error: 'item (string) and quantity (positive integer) are required' });
   }
 
-  if (!(item in stock)) {
+  // hasOwnProperty, not the `in` operator: `in` also matches inherited
+  // Object.prototype keys, so item: "constructor" or "toString" would
+  // otherwise slip past this check and let stock[item] read/write a
+  // prototype property instead of a real stock entry.
+  if (!Object.prototype.hasOwnProperty.call(stock, item)) {
     return res.status(404).json({ error: `unknown item: ${item}` });
   }
 

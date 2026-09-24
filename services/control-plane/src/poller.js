@@ -170,12 +170,26 @@ async function progressIncident(serviceName, evaluation) {
     return;
   }
 
-  await attemptRemediation(serviceName, { id: tracked.incidentId, service_name: serviceName }, tracked.lastAction || 'restart');
+  try {
+    await attemptRemediation(serviceName, { id: tracked.incidentId, service_name: serviceName }, tracked.lastAction || 'restart');
+  } catch (err) {
+    // An unexpected throw here (vs. remediate()'s own caught failures)
+    // must not leave this incident stuck in activeIncidents forever —
+    // that would also hold the chaos lock forever, since only
+    // resolveIncident() ever releases it. Resolve as failed once
+    // attempts are exhausted, same as the normal max-attempts path;
+    // otherwise let the next poll cycle retry.
+    console.error(`[poller] remediation attempt threw unexpectedly for incident ${tracked.incidentId}:`, err.message);
+    if (tracked.attempts >= MAX_ATTEMPTS) {
+      await resolveIncident(serviceName, tracked, false);
+    }
+  }
 }
 
 async function resolveIncident(serviceName, tracked, success) {
   activeIncidents.delete(serviceName);
   clearRateLimitFor(serviceName);
+  detector.resetDebounce(serviceName);
 
   // Release the "an incident is already being investigated" lock only
   // once nothing else is still in flight — a manual trigger and an

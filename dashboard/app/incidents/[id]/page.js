@@ -55,7 +55,10 @@ export default function IncidentDetailPage() {
   }
 
   const phase = getIncidentPhase(incident);
-  const mttd = formatDuration(incident.detected_at, incident.diagnosed_at);
+  // Not MTTD: no timestamp for when the fault actually began exists to
+  // measure detection time against. This is genuinely detect->diagnose
+  // latency — see MetricsSummary.js for the fuller rationale.
+  const diagnoseTime = formatDuration(incident.detected_at, incident.diagnosed_at);
   const mttr = formatDuration(incident.detected_at, incident.resolved_at);
 
   const steps = [
@@ -81,8 +84,8 @@ export default function IncidentDetailPage() {
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="text-xs uppercase text-ink-muted">MTTD</div>
-          <div className="mt-1 font-mono text-lg">{mttd}</div>
+          <div className="text-xs uppercase text-ink-muted">Diagnose time</div>
+          <div className="mt-1 font-mono text-lg">{diagnoseTime}</div>
         </div>
         <div className="rounded-lg border border-border bg-surface p-4">
           <div className="text-xs uppercase text-ink-muted">MTTR</div>

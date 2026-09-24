@@ -1,4 +1,11 @@
-const WINDOW_SIZE = 100;
+// A large window dilutes a real, ongoing problem against a long tail
+// of past-healthy history — a 30%-error-rate threshold needs errors
+// to actually dominate the window, and at realistic local traffic
+// volume (a synthetic order every 2-4s), a 30s error_rate fault only
+// contributes ~10-15 new requests, which a 100-request window mostly
+// buries. 20 keeps the window meaningfully "recent" so a genuine
+// ongoing fault is reliably visible, not statistically hidden.
+const WINDOW_SIZE = 20;
 
 const window = [];
 
