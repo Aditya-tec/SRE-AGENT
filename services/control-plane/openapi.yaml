@@ -113,6 +113,41 @@ paths:
                       nullable: true
         '500':
           $ref: '#/components/responses/Error'
+  /query:
+    post:
+      summary: Ask a natural-language question about current status/incidents
+      description: >-
+        Read-only. Answers are generated from the same incidents/services
+        data exposed by GET /incidents and GET /services — the assistant
+        cannot trigger remediation, chaos, or any other action, even if
+        asked to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  maxLength: 300
+      responses:
+        '200':
+          description: Plain-English answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /break-it:
     post:
       summary: Inject a fault (or named multi-step scenario)

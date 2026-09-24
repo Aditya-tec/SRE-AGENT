@@ -8,6 +8,7 @@ const servicesRoute = require('./routes/services');
 const gatewayRoute = require('./routes/gateway');
 const breakItRoute = require('./routes/breakIt');
 const statusRoute = require('./routes/status');
+const queryRoute = require('./routes/query');
 
 function corsOptions() {
   const origins = process.env.DASHBOARD_ORIGIN
@@ -50,6 +51,18 @@ function createApp() {
     message: { error: 'you can trigger one incident every 5 minutes — try again shortly' },
   });
 
+  // /query is another public, unauthenticated Groq call — same abuse
+  // shape as /break-it (someone hammering it to burn API quota), but
+  // it's read-only and cheap per-call, so it gets a looser per-IP cap
+  // rather than break-it's one-per-5-minutes.
+  const queryLimiter = rateLimit({
+    windowMs: Number(process.env.QUERY_RATE_LIMIT_WINDOW_MS) || 60 * 1000,
+    limit: Number(process.env.QUERY_RATE_LIMIT_MAX) || 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too many questions — try again in a minute' },
+  });
+
   app.get('/health', (req, res) => {
     res.json({
       status: 'healthy',
@@ -65,6 +78,8 @@ function createApp() {
   app.use(gatewayRoute);
   app.use('/break-it', breakItLimiter);
   app.use(breakItRoute);
+  app.use('/query', queryLimiter);
+  app.use(queryRoute);
 
   app.use((err, req, res, next) => {
     console.error('[control-plane] unhandled error:', err.message);
