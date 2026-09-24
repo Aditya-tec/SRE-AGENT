@@ -36,3 +36,7 @@ export function breakItScenario(scenario) {
     body: JSON.stringify({ scenario }),
   });
 }
+
+export function approveIncident(id) {
+  return apiFetch(`/incidents/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+}

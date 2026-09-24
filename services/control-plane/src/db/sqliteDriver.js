@@ -42,7 +42,8 @@ db.exec(`
     remediation_success INTEGER,
     postmortem TEXT,
     raw_context TEXT,
-    is_flapping INTEGER NOT NULL DEFAULT 0
+    is_flapping INTEGER NOT NULL DEFAULT 0,
+    awaiting_approval INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS metrics_snapshots (
@@ -67,6 +68,9 @@ const incidentColumns = db.prepare('PRAGMA table_info(incidents)').all().map((c)
 if (!incidentColumns.includes('is_flapping')) {
   db.exec('ALTER TABLE incidents ADD COLUMN is_flapping INTEGER NOT NULL DEFAULT 0');
 }
+if (!incidentColumns.includes('awaiting_approval')) {
+  db.exec('ALTER TABLE incidents ADD COLUMN awaiting_approval INTEGER NOT NULL DEFAULT 0');
+}
 
 function toIncidentRow(fields) {
   const row = { ...fields };
@@ -75,6 +79,9 @@ function toIncidentRow(fields) {
   }
   if ('is_flapping' in row) {
     row.is_flapping = row.is_flapping ? 1 : 0;
+  }
+  if ('awaiting_approval' in row) {
+    row.awaiting_approval = row.awaiting_approval ? 1 : 0;
   }
   if ('raw_context' in row && row.raw_context != null && typeof row.raw_context === 'object') {
     row.raw_context = JSON.stringify(row.raw_context);
@@ -88,6 +95,7 @@ function fromIncidentRow(row) {
     ...row,
     remediation_success: row.remediation_success === null ? null : !!row.remediation_success,
     is_flapping: !!row.is_flapping,
+    awaiting_approval: !!row.awaiting_approval,
     raw_context: row.raw_context ? JSON.parse(row.raw_context) : null,
   };
 }
@@ -161,12 +169,13 @@ async function insertIncident(incident) {
     postmortem: null,
     raw_context: null,
     is_flapping: false,
+    awaiting_approval: false,
     ...incident,
     id,
   });
   db.prepare(
-    `INSERT INTO incidents (id, service_name, trigger_type, fault_type, detected_at, diagnosed_at, remediated_at, resolved_at, root_cause, remediation_action, remediation_success, postmortem, raw_context, is_flapping)
-     VALUES (@id, @service_name, @trigger_type, @fault_type, @detected_at, @diagnosed_at, @remediated_at, @resolved_at, @root_cause, @remediation_action, @remediation_success, @postmortem, @raw_context, @is_flapping)`
+    `INSERT INTO incidents (id, service_name, trigger_type, fault_type, detected_at, diagnosed_at, remediated_at, resolved_at, root_cause, remediation_action, remediation_success, postmortem, raw_context, is_flapping, awaiting_approval)
+     VALUES (@id, @service_name, @trigger_type, @fault_type, @detected_at, @diagnosed_at, @remediated_at, @resolved_at, @root_cause, @remediation_action, @remediation_success, @postmortem, @raw_context, @is_flapping, @awaiting_approval)`
   ).run(row);
   return getIncident(id);
 }

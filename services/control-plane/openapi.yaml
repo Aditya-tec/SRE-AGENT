@@ -63,6 +63,30 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+  /incidents/{id}/approve:
+    post:
+      summary: >-
+        Approve and execute a paused incident's recommended remediation
+        (only meaningful when AUTO_REMEDIATE=false)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Remediation executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approved:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
   /break-it:
     post:
       summary: Inject a fault (or named multi-step scenario)
@@ -189,6 +213,11 @@ components:
             window (this one included) — usually means the underlying
             problem wasn't actually fixed by remediation, or the fault
             is inherently intermittent.
+        awaiting_approval:
+          type: boolean
+          description: >-
+            True when AUTO_REMEDIATE=false has paused this incident
+            after diagnosis, pending POST /incidents/{id}/approve.
   responses:
     Error:
       description: Error payload
