@@ -7,6 +7,7 @@ const express = require('express');
 const db = require('../src/db');
 const incidentsRoute = require('../src/routes/incidents');
 const servicesRoute = require('../src/routes/services');
+const statusRoute = require('../src/routes/status');
 const poller = require('../src/poller');
 
 async function withApp(run) {
@@ -14,6 +15,7 @@ async function withApp(run) {
   app.use(express.json());
   app.use(incidentsRoute);
   app.use(servicesRoute);
+  app.use(statusRoute);
   const server = app.listen(0);
   server.unref();
   const baseUrl = `http://localhost:${server.address().port}`;
@@ -106,6 +108,28 @@ test('GET /confidence-report aggregates success rate per confidence level', asyn
       medium: { total: 1, resolved: 1, succeeded: 0, successRate: 0 },
       low: { total: 1, resolved: 0, succeeded: 0, successRate: null },
     });
+  });
+});
+
+test('GET /status computes uptime % per service and exposes nothing beyond name + percentage', async () => {
+  db.getRecentSnapshots = async (name) => {
+    if (name === 'order-service-a') {
+      return [{ status: 'healthy' }, { status: 'healthy' }, { status: 'down' }, { status: 'degraded' }];
+    }
+    return []; // no snapshots yet
+  };
+  await withApp(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/status`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.length, Object.keys(poller.SERVICES).length);
+
+    const orderA = body.find((s) => s.name === 'order-service-a');
+    assert.equal(orderA.uptimePercent, 75, '3 of 4 snapshots are not "down"');
+    assert.deepEqual(Object.keys(orderA).sort(), ['name', 'uptimePercent'], 'no incident internals, root causes, or postmortems');
+
+    const noData = body.find((s) => s.name !== 'order-service-a');
+    assert.equal(noData.uptimePercent, null, 'no snapshots yet should not report 0% or crash');
   });
 });
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import ServiceHealthGrid from '../components/ServiceHealthGrid';
 import MetricsSummary from '../components/MetricsSummary';
 import ConfidenceCalibration from '../components/ConfidenceCalibration';
@@ -64,6 +65,9 @@ export default function DashboardPage() {
             Three microservices, a control plane that detects, diagnoses, and remediates incidents on its own —
             no human in the loop. Click &ldquo;Break It&rdquo; to watch it happen live.
           </p>
+          <Link href="/status" className="mt-2 inline-block text-xs text-accent hover:underline">
+            Public status page →
+          </Link>
         </div>
         <BreakItButton onTriggered={refreshIncidents} />
       </header>
