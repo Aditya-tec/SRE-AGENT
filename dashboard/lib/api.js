@@ -28,3 +28,11 @@ export function breakIt(service, faultType) {
     body: JSON.stringify({ service, faultType }),
   });
 }
+
+export function breakItScenario(scenario) {
+  return apiFetch('/break-it', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scenario }),
+  });
+}

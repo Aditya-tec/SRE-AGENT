@@ -9,7 +9,7 @@
     "dev:order-b": "cross-env PORT=3011 REPLICA_ID=b node scripts/supervise.js services/order-service",
     "dev:inventory": "cross-env PORT=3002 node scripts/supervise.js services/inventory-service",
     "dev:notification": "cross-env PORT=3003 node scripts/supervise.js services/notification-service",
-    "dev:control-plane": "cross-env STORAGE_DRIVER=sqlite BREAK_IT_RATE_LIMIT_MAX=1000 node scripts/supervise.js services/control-plane",
+    "dev:control-plane": "cross-env BREAK_IT_RATE_LIMIT_MAX=1000 node --env-file=services/control-plane/.env scripts/supervise.js services/control-plane",
     "dev:dashboard": "cross-env PORT=3006 NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:3000 npm run dev --prefix dashboard",
     "dev:all": "concurrently -n order-a,order-b,inventory,notification,control-plane,dashboard -c yellow,cyan,green,blue,magenta,white \"npm run dev:order-a\" \"npm run dev:order-b\" \"npm run dev:inventory\" \"npm run dev:notification\" \"npm run dev:control-plane\" \"npm run dev:dashboard\"",
     "seed:demo": "node scripts/seed-demo.js"

@@ -1,6 +1,6 @@
 const db = require('./db');
 const detector = require('./detector');
-const { diagnose } = require('./diagnose');
+const { diagnose, CALL_CHAIN } = require('./diagnose');
 const { remediate, clearRateLimitFor, MAX_ATTEMPTS } = require('./remediate');
 const { notifyDiscord } = require('./discord');
 const { generatePostmortem } = require('./postmortem');
@@ -16,6 +16,15 @@ const SERVICES = {
   'order-service-b': process.env.ORDER_B_URL || 'http://localhost:3011',
   'inventory-service': process.env.INVENTORY_URL || 'http://localhost:3002',
   'notification-service': process.env.NOTIFICATION_URL || 'http://localhost:3003',
+};
+
+// Upstream deps own the incident when several call-chain neighbors trip
+// in the same window — remediate the likely root, not a downstream symptom.
+const BUNDLE_PRIORITY = {
+  'inventory-service': 0,
+  'notification-service': 1,
+  'order-service-a': 2,
+  'order-service-b': 2,
 };
 
 // serviceName -> { incidentId, attempts, consecutiveHealthy }
@@ -35,6 +44,20 @@ async function fetchJson(url) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Returns true if this service should attach to an existing call-chain
+// incident rather than opening its own (correlated-diagnosis bundling).
+function findOpenCallChainNeighbor(serviceName) {
+  const neighbors = CALL_CHAIN[serviceName] || [];
+  for (const n of neighbors) {
+    if (activeIncidents.has(n)) return n;
+  }
+  // Symmetric: an open service that lists us as a neighbor.
+  for (const openName of activeIncidents.keys()) {
+    if ((CALL_CHAIN[openName] || []).includes(serviceName)) return openName;
+  }
+  return null;
 }
 
 async function pollService(name, baseUrl) {
@@ -75,13 +98,7 @@ async function pollService(name, baseUrl) {
     console.error(`[poller] db write failed for ${name}:`, err.message);
   }
 
-  if (activeIncidents.has(name)) {
-    await progressIncident(name, evaluation);
-  } else if (evaluation.state === 'detected') {
-    await openIncident(name, evaluation);
-  } else if (evaluation.state === 'suspected') {
-    console.log(`[poller] ${name} suspected anomaly (${evaluation.reason}), awaiting confirmation`);
-  }
+  return { name, evaluation };
 }
 
 async function openIncident(serviceName, evaluation) {
@@ -126,7 +143,17 @@ async function openIncident(serviceName, evaluation) {
       `[poller] diagnosed incident ${incident.id}: "${diagnosis.rootCause}" (confidence=${diagnosis.confidence}, recommends=${diagnosis.recommendedAction})`
     );
 
-    await attemptRemediation(serviceName, { ...incident, service_name: serviceName }, diagnosis.recommendedAction);
+    const tracked = activeIncidents.get(serviceName);
+    if (tracked) {
+      tracked.confidence = diagnosis.confidence;
+      tracked.recommendedAction = diagnosis.recommendedAction;
+    }
+
+    // Confidence-weighted: low -> monitor first and only escalate if the
+    // anomaly is still there next poll; high/medium -> act immediately.
+    const initialAction =
+      diagnosis.confidence === 'low' ? 'monitor' : diagnosis.recommendedAction || 'restart';
+    await attemptRemediation(serviceName, { ...incident, service_name: serviceName }, initialAction);
   } catch (err) {
     console.error(`[poller] diagnosis pipeline failed for incident ${incident.id}:`, err.message);
   }
@@ -139,8 +166,8 @@ async function attemptRemediation(serviceName, incident, action) {
   tracked.attempts += 1;
   tracked.lastAction = action;
 
-  console.log(`[poller] state transition -> Remediating: incident ${tracked.incidentId} (attempt ${tracked.attempts}/${MAX_ATTEMPTS}, action=${action})`);
-  await remediate(incident, action);
+  console.log(`[poller] state transition -> Remediating: incident ${tracked.incidentId} (attempt ${tracked.attempts}/${MAX_ATTEMPTS}, action=${action}, confidence=${tracked.confidence || 'n/a'})`);
+  await remediate(incident, action, tracked.attempts);
 
   try {
     await db.updateIncident(tracked.incidentId, { remediated_at: new Date().toISOString() });
@@ -170,8 +197,18 @@ async function progressIncident(serviceName, evaluation) {
     return;
   }
 
+  // After a low-confidence monitor pass, escalate to the recommended
+  // action (or restart) only once the anomaly has persisted another cycle.
+  let nextAction = tracked.lastAction || 'restart';
+  if (tracked.lastAction === 'monitor') {
+    nextAction =
+      tracked.recommendedAction && tracked.recommendedAction !== 'monitor'
+        ? tracked.recommendedAction
+        : 'restart';
+  }
+
   try {
-    await attemptRemediation(serviceName, { id: tracked.incidentId, service_name: serviceName }, tracked.lastAction || 'restart');
+    await attemptRemediation(serviceName, { id: tracked.incidentId, service_name: serviceName }, nextAction);
   } catch (err) {
     // An unexpected throw here (vs. remediate()'s own caught failures)
     // must not leave this incident stuck in activeIncidents forever —
@@ -250,7 +287,43 @@ async function pollAll() {
     }
 
     try {
-      await Promise.all(Object.entries(SERVICES).map(([name, url]) => pollService(name, url)));
+      // Phase 1: fetch + evaluate every service in parallel (metrics only).
+      // Opening incidents here used to race — two call-chain neighbors
+      // confirming in the same tick each opened their own row before
+      // either landed in activeIncidents.
+      const results = await Promise.all(
+        Object.entries(SERVICES).map(([name, url]) => pollService(name, url))
+      );
+
+      // Phase 2a: progress already-open incidents.
+      for (const { name, evaluation } of results) {
+        if (activeIncidents.has(name)) {
+          await progressIncident(name, evaluation);
+        } else if (evaluation.state === 'suspected') {
+          console.log(`[poller] ${name} suspected anomaly (${evaluation.reason}), awaiting confirmation`);
+        }
+      }
+
+      // Phase 2b: open at most one new incident per call-chain cluster.
+      // Upstream deps win ownership so remediation targets the likely root;
+      // diagnose() still pulls neighbor telemetry into that single context.
+      const newlyDetected = results
+        .filter(({ name, evaluation }) => !activeIncidents.has(name) && evaluation.state === 'detected')
+        .sort(
+          (a, b) =>
+            (BUNDLE_PRIORITY[a.name] ?? 99) - (BUNDLE_PRIORITY[b.name] ?? 99)
+        );
+
+      for (const { name, evaluation } of newlyDetected) {
+        const neighbor = findOpenCallChainNeighbor(name);
+        if (neighbor) {
+          console.log(
+            `[poller] bundling ${name} anomaly into existing incident on ${neighbor} (correlated call-chain)`
+          );
+          continue;
+        }
+        await openIncident(name, evaluation);
+      }
     } catch (err) {
       // A single bad tick must never silently kill the setInterval —
       // this is the "who watches the watchmen" gap: without it, a bug

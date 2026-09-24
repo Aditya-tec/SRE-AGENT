@@ -1,7 +1,13 @@
 const express = require('express');
+const { z } = require('zod');
 const { maybeApplyChaos } = require('../chaosState');
 
 const router = express.Router();
+
+const reserveBodySchema = z.object({
+  item: z.string().min(1),
+  quantity: z.number().int().positive(),
+});
 
 const stock = {
   'blue-mug': 50,
@@ -22,11 +28,11 @@ router.post('/reserve', async (req, res) => {
     return res.status(chaosResult.status).json(chaosResult.body);
   }
 
-  const { item, quantity } = req.body || {};
-
-  if (typeof item !== 'string' || !Number.isInteger(quantity) || quantity <= 0) {
+  const parsed = reserveBodySchema.safeParse(req.body);
+  if (!parsed.success) {
     return res.status(400).json({ error: 'item (string) and quantity (positive integer) are required' });
   }
+  const { item, quantity } = parsed.data;
 
   // hasOwnProperty, not the `in` operator: `in` also matches inherited
   // Object.prototype keys, so item: "constructor" or "toString" would

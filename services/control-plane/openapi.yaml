@@ -1,0 +1,194 @@
+openapi: 3.0.3
+info:
+  title: SRE Agent Control Plane
+  version: 1.0.0
+  description: Read APIs and chaos trigger for the autonomous SRE demo.
+servers:
+  - url: http://localhost:3000
+paths:
+  /services:
+    get:
+      summary: List tracked services and latest health
+      responses:
+        '200':
+          description: Service health snapshot
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Service'
+        '500':
+          $ref: '#/components/responses/Error'
+  /incidents:
+    get:
+      summary: List recent incidents
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+      responses:
+        '200':
+          description: Incidents newest-first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Incident'
+        '500':
+          $ref: '#/components/responses/Error'
+  /incidents/{id}:
+    get:
+      summary: Get one incident by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Incident detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /break-it:
+    post:
+      summary: Inject a fault (or named multi-step scenario)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [service, faultType]
+                  properties:
+                    service:
+                      type: string
+                      enum:
+                        - order-service-a
+                        - order-service-b
+                        - inventory-service
+                        - notification-service
+                    faultType:
+                      type: string
+                      enum: [latency, error_rate, crash]
+                    triggerType:
+                      type: string
+                      enum: [manual, autonomous]
+                - type: object
+                  required: [scenario]
+                  properties:
+                    scenario:
+                      type: string
+                      enum:
+                        - cascading-failure
+                        - dual-replica-pressure
+                        - inventory-then-orders
+                    triggerType:
+                      type: string
+                      enum: [manual, autonomous]
+      responses:
+        '202':
+          description: Fault injected; incident opens after poller debounce
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incidentIdPending:
+                    type: boolean
+                  scenario:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    Service:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [healthy, degraded, down]
+        lastSeenAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastLatencyMs:
+          type: number
+          nullable: true
+        lastErrorRate:
+          type: number
+          nullable: true
+    Incident:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        service_name:
+          type: string
+        trigger_type:
+          type: string
+        fault_type:
+          type: string
+        detected_at:
+          type: string
+          format: date-time
+        diagnosed_at:
+          type: string
+          format: date-time
+          nullable: true
+        remediated_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        root_cause:
+          type: string
+          nullable: true
+        remediation_action:
+          type: string
+          nullable: true
+        remediation_success:
+          type: boolean
+          nullable: true
+        postmortem:
+          type: string
+          nullable: true
+        raw_context:
+          type: object
+          nullable: true
+  responses:
+    Error:
+      description: Error payload
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string

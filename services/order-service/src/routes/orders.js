@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const { z } = require('zod');
 const { maybeApplyChaos } = require('../chaosState');
 
 const router = express.Router();
@@ -15,6 +16,11 @@ const NOTIFICATION_URL = process.env.NOTIFICATION_URL || 'http://localhost:3003'
 // request at all (its 'finish' event never fires on an aborted
 // connection) — which was silently breaking latency-fault detection.
 const UPSTREAM_TIMEOUT_MS = 8000;
+
+const orderBodySchema = z.object({
+  item: z.string().min(1),
+  quantity: z.number().int().positive(),
+});
 
 async function callUpstream(url, body) {
   const controller = new AbortController();
@@ -39,11 +45,11 @@ router.post('/orders', async (req, res) => {
     return res.status(chaosResult.status).json(chaosResult.body);
   }
 
-  const { item, quantity } = req.body || {};
-
-  if (typeof item !== 'string' || !Number.isInteger(quantity) || quantity <= 0) {
+  const parsed = orderBodySchema.safeParse(req.body);
+  if (!parsed.success) {
     return res.status(400).json({ error: 'item (string) and quantity (positive integer) are required' });
   }
+  const { item, quantity } = parsed.data;
 
   let reserveResult;
   try {
