@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 async function notifyDiscord(message) {
   const url = process.env.DISCORD_WEBHOOK_URL;
   if (!url) return;
@@ -9,7 +11,7 @@ async function notifyDiscord(message) {
       body: JSON.stringify({ content: message }),
     });
   } catch (err) {
-    console.error('[discord] webhook call failed:', err.message);
+    logger.error({ err }, 'discord webhook call failed');
   }
 }
 

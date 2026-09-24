@@ -6,6 +6,7 @@ const healthRoute = require('./routes/health');
 const metricsRoute = require('./routes/metrics');
 const reserveRoute = require('./routes/reserve');
 const chaosRoute = require('./routes/chaos');
+const logger = require('./logger');
 
 function createApp() {
   const app = express();
@@ -34,7 +35,7 @@ function createApp() {
   app.use(chaosRoute);
 
   app.use((err, req, res, next) => {
-    console.error('[inventory-service] unhandled error:', err.message);
+    logger.error({ err }, 'unhandled error');
     res.status(err.status || 500).json({ error: 'internal server error' });
   });
 

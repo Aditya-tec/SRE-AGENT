@@ -1,14 +1,15 @@
 const { createApp } = require('./app');
+const logger = require('./logger');
 
 process.on('unhandledRejection', (err) => {
-  console.error('[inventory-service] unhandled rejection:', err);
+  logger.error({ err }, 'unhandled rejection');
 });
 process.on('uncaughtException', (err) => {
-  console.error('[inventory-service] uncaught exception:', err);
+  logger.error({ err }, 'uncaught exception');
 });
 
 const app = createApp();
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
-  console.log(`inventory-service listening on port ${PORT}`);
+  logger.info({ port: PORT }, 'inventory-service listening');
 });

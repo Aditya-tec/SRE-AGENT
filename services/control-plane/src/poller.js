@@ -1,5 +1,6 @@
 const db = require('./db');
 const detector = require('./detector');
+const logger = require('./logger');
 const { diagnose, CALL_CHAIN } = require('./diagnose');
 const { remediate, clearRateLimitFor, MAX_ATTEMPTS } = require('./remediate');
 const { notifyDiscord } = require('./discord');
@@ -109,7 +110,7 @@ async function pollService(name, baseUrl) {
       status,
     });
   } catch (err) {
-    console.error(`[poller] db write failed for ${name}:`, err.message);
+    logger.error({ err, service: name }, 'db write failed');
   }
 
   return { name, evaluation };
@@ -142,20 +143,23 @@ async function openIncident(serviceName, evaluation) {
     });
 
     if (isFlapping) {
-      console.log(`[poller] ${serviceName} is flapping: ${recentCount + 1} incidents within ${FLAPPING_WINDOW_MS / 60000}min`);
+      logger.warn(
+        { service: serviceName, incidentCount: recentCount + 1, windowMin: FLAPPING_WINDOW_MS / 60000 },
+        'service is flapping'
+      );
     }
 
-    console.log(`[poller] state transition -> Detected: ${serviceName} (${evaluation.reason}), incident ${incident.id}`);
+    logger.info({ service: serviceName, reason: evaluation.reason, incidentId: incident.id }, 'state transition -> Detected');
     await notifyDiscord(`🔴 Incident: ${serviceName} — ${evaluation.faultType}`);
   } catch (err) {
-    console.error(`[poller] failed to open incident for ${serviceName}:`, err.message);
+    logger.error({ err, service: serviceName }, 'failed to open incident');
     return;
   }
 
   activeIncidents.set(serviceName, { incidentId: incident.id, attempts: 0, consecutiveHealthy: 0 });
 
   try {
-    console.log(`[poller] state transition -> Diagnosing: incident ${incident.id}`);
+    logger.info({ incidentId: incident.id }, 'state transition -> Diagnosing');
     const diagnosis = await diagnose(incident);
 
     await db.updateIncident(incident.id, {
@@ -165,8 +169,9 @@ async function openIncident(serviceName, evaluation) {
       confidence: diagnosis.confidence,
     });
 
-    console.log(
-      `[poller] diagnosed incident ${incident.id}: "${diagnosis.rootCause}" (confidence=${diagnosis.confidence}, recommends=${diagnosis.recommendedAction})`
+    logger.info(
+      { incidentId: incident.id, rootCause: diagnosis.rootCause, confidence: diagnosis.confidence, recommendedAction: diagnosis.recommendedAction },
+      'diagnosed incident'
     );
 
     const tracked = activeIncidents.get(serviceName);
@@ -178,8 +183,9 @@ async function openIncident(serviceName, evaluation) {
     if (!AUTO_REMEDIATE) {
       if (tracked) tracked.awaitingApproval = true;
       await db.updateIncident(incident.id, { awaiting_approval: true });
-      console.log(
-        `[poller] incident ${incident.id} awaiting approval (AUTO_REMEDIATE=false) — recommends ${diagnosis.recommendedAction}`
+      logger.info(
+        { incidentId: incident.id, recommendedAction: diagnosis.recommendedAction },
+        'incident awaiting approval (AUTO_REMEDIATE=false)'
       );
       return;
     }
@@ -190,7 +196,7 @@ async function openIncident(serviceName, evaluation) {
       diagnosis.confidence === 'low' ? 'monitor' : diagnosis.recommendedAction || 'restart';
     await attemptRemediation(serviceName, { ...incident, service_name: serviceName }, initialAction);
   } catch (err) {
-    console.error(`[poller] diagnosis pipeline failed for incident ${incident.id}:`, err.message);
+    logger.error({ err, incidentId: incident.id }, 'diagnosis pipeline failed');
   }
 }
 
@@ -201,16 +207,19 @@ async function attemptRemediation(serviceName, incident, action) {
   tracked.attempts += 1;
   tracked.lastAction = action;
 
-  console.log(`[poller] state transition -> Remediating: incident ${tracked.incidentId} (attempt ${tracked.attempts}/${MAX_ATTEMPTS}, action=${action}, confidence=${tracked.confidence || 'n/a'})`);
+  logger.info(
+    { incidentId: tracked.incidentId, attempt: tracked.attempts, maxAttempts: MAX_ATTEMPTS, action, confidence: tracked.confidence || 'n/a' },
+    'state transition -> Remediating'
+  );
   await remediate(incident, action, tracked.attempts);
 
   try {
     await db.updateIncident(tracked.incidentId, { remediated_at: new Date().toISOString() });
   } catch (err) {
-    console.error(`[poller] failed to record remediated_at for incident ${tracked.incidentId}:`, err.message);
+    logger.error({ err, incidentId: tracked.incidentId }, 'failed to record remediated_at');
   }
 
-  console.log(`[poller] state transition -> Verifying: incident ${tracked.incidentId}`);
+  logger.info({ incidentId: tracked.incidentId }, 'state transition -> Verifying');
 }
 
 async function progressIncident(serviceName, evaluation) {
@@ -259,7 +268,7 @@ async function progressIncident(serviceName, evaluation) {
     // resolveIncident() ever releases it. Resolve as failed once
     // attempts are exhausted, same as the normal max-attempts path;
     // otherwise let the next poll cycle retry.
-    console.error(`[poller] remediation attempt threw unexpectedly for incident ${tracked.incidentId}:`, err.message);
+    logger.error({ err, incidentId: tracked.incidentId }, 'remediation attempt threw unexpectedly');
     if (tracked.attempts >= MAX_ATTEMPTS) {
       await resolveIncident(serviceName, tracked, false);
     }
@@ -286,12 +295,12 @@ async function approveIncident(incidentId) {
   try {
     await db.updateIncident(incidentId, { awaiting_approval: false });
   } catch (err) {
-    console.error(`[poller] failed to clear awaiting_approval for incident ${incidentId}:`, err.message);
+    logger.error({ err, incidentId }, 'failed to clear awaiting_approval');
   }
 
   const action =
     tracked.recommendedAction && tracked.recommendedAction !== 'monitor' ? tracked.recommendedAction : 'restart';
-  console.log(`[poller] incident ${incidentId} approved — executing ${action}`);
+  logger.info({ incidentId, action }, 'incident approved — executing action');
   await attemptRemediation(serviceName, { id: incidentId, service_name: serviceName }, action);
   return { ok: true };
 }
@@ -315,14 +324,17 @@ async function resolveIncident(serviceName, tracked, success) {
       remediation_success: success,
     });
   } catch (err) {
-    console.error(`[poller] failed to mark incident ${tracked.incidentId} resolved:`, err.message);
+    logger.error({ err, incidentId: tracked.incidentId }, 'failed to mark incident resolved');
   }
 
   if (success) {
-    console.log(`[poller] state transition -> Resolved: incident ${tracked.incidentId} (${serviceName})`);
+    logger.info({ incidentId: tracked.incidentId, service: serviceName }, 'state transition -> Resolved');
     await notifyDiscord(`✅ Resolved: ${serviceName} incident ${tracked.incidentId}`);
   } else {
-    console.log(`[poller] state transition -> Unresolved (max attempts): incident ${tracked.incidentId} (${serviceName})`);
+    logger.warn(
+      { incidentId: tracked.incidentId, service: serviceName, maxAttempts: MAX_ATTEMPTS },
+      'state transition -> Unresolved (max attempts)'
+    );
     await notifyDiscord(`⚠️ Unresolved after ${MAX_ATTEMPTS} attempts: ${serviceName} incident ${tracked.incidentId}`);
   }
 
@@ -330,9 +342,9 @@ async function resolveIncident(serviceName, tracked, success) {
     try {
       const postmortem = await generatePostmortem(updated);
       await db.updateIncident(tracked.incidentId, { postmortem });
-      console.log(`[poller] postmortem generated for incident ${tracked.incidentId}`);
+      logger.info({ incidentId: tracked.incidentId }, 'postmortem generated');
     } catch (err) {
-      console.error(`[poller] postmortem generation failed for incident ${tracked.incidentId}:`, err.message);
+      logger.error({ err, incidentId: tracked.incidentId }, 'postmortem generation failed');
     }
   }
 }
@@ -347,7 +359,7 @@ async function pollAll() {
   // against the same incident. Skip this tick rather than run in
   // parallel with the last one.
   if (polling) {
-    console.error('[poller] previous poll cycle still running, skipping this tick');
+    logger.warn('previous poll cycle still running, skipping this tick');
     return;
   }
   polling = true;
@@ -356,7 +368,7 @@ async function pollAll() {
     try {
       await db.deleteOldSnapshots();
     } catch (err) {
-      console.error('[poller] failed to prune old snapshots:', err.message);
+      logger.error({ err }, 'failed to prune old snapshots');
     }
 
     try {
@@ -373,7 +385,7 @@ async function pollAll() {
         if (activeIncidents.has(name)) {
           await progressIncident(name, evaluation);
         } else if (evaluation.state === 'suspected') {
-          console.log(`[poller] ${name} suspected anomaly (${evaluation.reason}), awaiting confirmation`);
+          logger.info({ service: name, reason: evaluation.reason }, 'suspected anomaly, awaiting confirmation');
         }
       }
 
@@ -390,9 +402,7 @@ async function pollAll() {
       for (const { name, evaluation } of newlyDetected) {
         const neighbor = findOpenCallChainNeighbor(name);
         if (neighbor) {
-          console.log(
-            `[poller] bundling ${name} anomaly into existing incident on ${neighbor} (correlated call-chain)`
-          );
+          logger.info({ service: name, neighbor }, 'bundling anomaly into existing incident (correlated call-chain)');
           continue;
         }
         await openIncident(name, evaluation);
@@ -401,7 +411,7 @@ async function pollAll() {
       // A single bad tick must never silently kill the setInterval —
       // this is the "who watches the watchmen" gap: without it, a bug
       // here would go quiet with nothing external noticing.
-      console.error('[poller] poll cycle failed unexpectedly:', err.message);
+      logger.error({ err }, 'poll cycle failed unexpectedly');
     }
 
     lastPollAt = new Date().toISOString();

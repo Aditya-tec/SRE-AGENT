@@ -1,5 +1,6 @@
 const Groq = require('groq-sdk');
 const db = require('./db');
+const logger = require('./logger');
 
 // Same model choice as diagnose.js — see the comment there for why
 // llama-3.3-70b-versatile isn't used.
@@ -92,7 +93,7 @@ async function answerQuery(question) {
   const request = buildCompletionRequest(question, context);
 
   if (!groq) {
-    console.error('[query] GROQ_API_KEY not set, using fallback answer');
+    logger.warn('GROQ_API_KEY not set, using fallback answer');
     return FALLBACK_ANSWER;
   }
 
@@ -107,7 +108,7 @@ async function answerQuery(question) {
 
     return { answer: parsed.answer };
   } catch (err) {
-    console.error('[query] Groq call failed, falling back:', err.message);
+    logger.error({ err }, 'Groq call failed, falling back');
     return FALLBACK_ANSWER;
   }
 }

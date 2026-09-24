@@ -1,19 +1,20 @@
 const { createApp } = require('./app');
 const poller = require('./poller');
 const trafficGenerator = require('./trafficGenerator');
+const logger = require('./logger');
 
 process.on('unhandledRejection', (err) => {
-  console.error('[control-plane] unhandled rejection:', err);
+  logger.error({ err }, 'unhandled rejection');
 });
 process.on('uncaughtException', (err) => {
-  console.error('[control-plane] uncaught exception:', err);
+  logger.error({ err }, 'uncaught exception');
 });
 
 const app = createApp();
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`control-plane listening on port ${PORT}`);
+  logger.info({ port: PORT }, 'control-plane listening');
   poller.start();
-  console.log('[control-plane] polling loop started (5s interval)');
+  logger.info('polling loop started (5s interval)');
   trafficGenerator.start(PORT);
 });

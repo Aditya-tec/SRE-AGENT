@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 const ITEMS = [
   'blue-mug',
   'red-mug',
@@ -57,7 +59,7 @@ function fireOrder(port) {
 // measure against, without needing a separate Render service.
 function start(port) {
   scheduleNext(port);
-  console.log('[traffic-generator] started, firing synthetic orders through /gateway/orders every 1-2s');
+  logger.info('traffic generator started, firing synthetic orders through /gateway/orders every 1-2s');
 }
 
 module.exports = { start };

@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const poller = require('../poller');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -26,7 +27,7 @@ router.get('/status', async (req, res) => {
     );
     res.json(status);
   } catch (err) {
-    console.error('[status] GET /status failed:', err.message);
+    logger.error({ err }, 'GET /status failed');
     res.status(500).json({ error: 'failed to build status report' });
   }
 });

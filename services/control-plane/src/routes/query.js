@@ -1,6 +1,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { answerQuery, MAX_QUESTION_LENGTH } = require('../query');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -20,7 +21,7 @@ router.post('/query', async (req, res) => {
     const result = await answerQuery(parsed.data.question);
     res.json(result);
   } catch (err) {
-    console.error('[query] POST /query failed:', err.message);
+    logger.error({ err }, 'POST /query failed');
     res.status(500).json({ error: 'failed to answer query' });
   }
 });

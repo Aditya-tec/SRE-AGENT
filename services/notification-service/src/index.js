@@ -1,14 +1,15 @@
 const { createApp } = require('./app');
+const logger = require('./logger');
 
 process.on('unhandledRejection', (err) => {
-  console.error('[notification-service] unhandled rejection:', err);
+  logger.error({ err }, 'unhandled rejection');
 });
 process.on('uncaughtException', (err) => {
-  console.error('[notification-service] uncaught exception:', err);
+  logger.error({ err }, 'uncaught exception');
 });
 
 const app = createApp();
 const PORT = process.env.PORT || 3003;
 app.listen(PORT, () => {
-  console.log(`notification-service listening on port ${PORT}`);
+  logger.info({ port: PORT }, 'notification-service listening');
 });

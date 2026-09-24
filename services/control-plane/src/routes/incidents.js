@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const poller = require('../poller');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ router.get('/incidents', async (req, res) => {
     const incidents = await db.listIncidents(limit);
     res.json(incidents);
   } catch (err) {
-    console.error('[incidents] GET /incidents failed:', err.message);
+    logger.error({ err }, 'GET /incidents failed');
     res.status(500).json({ error: 'failed to list incidents' });
   }
 });
@@ -27,7 +28,7 @@ router.get('/incidents/:id', async (req, res) => {
     if (!incident) return res.status(404).json({ error: 'incident not found' });
     res.json(incident);
   } catch (err) {
-    console.error(`[incidents] GET /incidents/${req.params.id} failed:`, err.message);
+    logger.error({ err, incidentId: req.params.id }, 'GET /incidents/:id failed');
     res.status(500).json({ error: 'failed to fetch incident' });
   }
 });
@@ -67,7 +68,7 @@ router.get('/confidence-report', async (req, res) => {
     }
     res.json(report);
   } catch (err) {
-    console.error('[incidents] GET /confidence-report failed:', err.message);
+    logger.error({ err }, 'GET /confidence-report failed');
     res.status(500).json({ error: 'failed to build confidence report' });
   }
 });

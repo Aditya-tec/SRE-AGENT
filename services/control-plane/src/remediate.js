@@ -1,5 +1,6 @@
 const db = require('./db');
 const gatewayState = require('./gatewayState');
+const logger = require('./logger');
 
 const MAX_ATTEMPTS = 3;
 const RENDER_API_BASE = 'https://api.render.com/v1';
@@ -12,7 +13,7 @@ let RENDER_SERVICE_IDS = {};
 try {
   RENDER_SERVICE_IDS = JSON.parse(process.env.RENDER_SERVICE_IDS || '{}');
 } catch (err) {
-  console.error('[remediate] RENDER_SERVICE_IDS is not valid JSON, restarts will fail:', err.message);
+  logger.error({ err }, 'RENDER_SERVICE_IDS is not valid JSON, restarts will fail');
 }
 
 function idempotencyKey(incidentId, attemptNumber) {
@@ -67,13 +68,13 @@ async function executeAction(action, serviceName) {
 async function remediate(incident, action, attemptNumber = 1) {
   const key = idempotencyKey(incident.id, attemptNumber);
   if (priorResults.has(key)) {
-    console.log(`[remediate] idempotent skip for ${key} — returning prior result`);
+    logger.info({ key }, 'idempotent skip — returning prior result');
     return priorResults.get(key);
   }
 
   let result;
   if (action === 'monitor') {
-    console.log(`[remediate] incident ${incident.id}: monitoring only (attempt ${attemptNumber})`);
+    logger.info({ incidentId: incident.id, attemptNumber }, 'monitoring only');
     result = { success: true, action: 'monitor' };
   } else {
     // Log the action BEFORE execution — an audit trail must exist even if
@@ -84,15 +85,15 @@ async function remediate(incident, action, attemptNumber = 1) {
     try {
       await db.updateIncident(incident.id, { remediation_action: action });
     } catch (err) {
-      console.error(`[remediate] incident ${incident.id}: failed to record remediation_action:`, err.message);
+      logger.error({ err, incidentId: incident.id }, 'failed to record remediation_action');
     }
 
     try {
       await executeAction(action, incident.service_name);
-      console.log(`[remediate] incident ${incident.id}: ${action} succeeded on ${incident.service_name}`);
+      logger.info({ incidentId: incident.id, action, service: incident.service_name }, 'remediation action succeeded');
       result = { success: true, action };
     } catch (err) {
-      console.error(`[remediate] incident ${incident.id}: ${action} failed:`, err.message);
+      logger.error({ err, incidentId: incident.id, action }, 'remediation action failed');
       result = { success: false, action, error: err.message };
     }
   }
