@@ -78,3 +78,21 @@ test('remediate rejects an action outside the whitelist', async () => {
   assert.equal(result.success, false);
   assert.match(result.error, /unknown remediation action/);
 });
+
+test('idempotency: same (incidentId, attemptNumber) skips re-execution', async () => {
+  stubUpdateIncident();
+  gatewayState.setActiveReplica('a');
+
+  const first = await remediate({ id: 'inc_idem', service_name: 'order-service-a' }, 'traffic_shift', 1);
+  assert.equal(first.success, true);
+  assert.equal(gatewayState.getActiveReplica(), 'b');
+
+  const second = await remediate({ id: 'inc_idem', service_name: 'order-service-a' }, 'traffic_shift', 1);
+  assert.deepEqual(second, first);
+  // Would have flipped back to 'a' if re-executed.
+  assert.equal(gatewayState.getActiveReplica(), 'b');
+
+  const third = await remediate({ id: 'inc_idem', service_name: 'order-service-a' }, 'traffic_shift', 2);
+  assert.equal(third.success, true);
+  assert.equal(gatewayState.getActiveReplica(), 'a');
+});

@@ -104,4 +104,4 @@ async function diagnose(incident) {
   }
 }
 
-module.exports = { diagnose, buildContext };
+module.exports = { diagnose, buildContext, CALL_CHAIN };

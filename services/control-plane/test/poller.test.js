@@ -69,6 +69,26 @@ function startHealthServer({ healthy }) {
   });
 }
 
+function startLatencyServer(p95LatencyMs = 5000) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      res.setHeader('Connection', 'close');
+      if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'healthy' }));
+      } else if (req.url === '/metrics') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ requestCount: 20, errorCount: 0, p95LatencyMs }));
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    server.keepAliveTimeout = 1;
+    server.listen(0, () => resolve(server));
+    server.unref();
+  });
+}
+
 async function freshPoller(urls) {
   process.env.ORDER_A_URL = urls.orderA;
   process.env.ORDER_B_URL = urls.orderB;
@@ -318,6 +338,33 @@ test('chaosLock releases once the incident it was holding for resolves', async (
     assert.equal(chaosLock.isLocked(), false, 'lock should release once nothing is left in activeIncidents');
   } finally {
     down.close();
+    healthyStub.close();
+  }
+});
+
+test('call-chain bundling: inventory + order latency in the same window opens one incident', async () => {
+  const incidents = installFakeDb();
+  const slow = await startLatencyServer(5000);
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${slow.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${slow.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+
+    // 2 cycles to clear debounce on both services in the same window.
+    for (let cycle = 0; cycle < 4; cycle++) {
+      await poller.pollAll();
+    }
+
+    const open = [...incidents.values()].filter((i) => !i.resolved_at);
+    assert.equal(open.length, 1, `expected one bundled incident, got ${open.length}: ${open.map((i) => i.service_name).join(',')}`);
+    assert.equal(open[0].service_name, 'inventory-service', 'upstream dep should own the bundled incident');
+  } finally {
+    slow.close();
     healthyStub.close();
   }
 });

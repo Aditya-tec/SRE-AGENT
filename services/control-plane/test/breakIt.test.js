@@ -163,3 +163,51 @@ test('POST /break-it lock check happens before request-body validation', async (
     }
   });
 });
+
+test('POST /break-it scenario orchestrates chaos steps in sequence', async () => {
+  const inventory = await startMockChaosServer();
+  const notification = await startMockChaosServer();
+  process.env.INVENTORY_URL = `http://localhost:${inventory.server.address().port}`;
+  process.env.NOTIFICATION_URL = `http://localhost:${notification.server.address().port}`;
+  process.env.ORDER_A_URL = 'http://localhost:1';
+  process.env.ORDER_B_URL = 'http://localhost:1';
+
+  for (const mod of ['../src/routes/breakIt', '../src/triggerContext', '../src/chaosLock']) {
+    delete require.cache[require.resolve(mod)];
+  }
+  const breakItRoute = require('../src/routes/breakIt');
+  // Skip the real 10s inter-step delay so this stays a unit test.
+  breakItRoute.SCENARIOS['cascading-failure'][0].waitSec = 0;
+
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use(breakItRoute);
+  const appServer = app.listen(0);
+  appServer.unref();
+  const baseUrl = `http://localhost:${appServer.address().port}`;
+  const chaosLock = require('../src/chaosLock');
+
+  try {
+    const res = await fetch(`${baseUrl}/break-it`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: 'cascading-failure' }),
+    });
+    assert.equal(res.status, 202);
+    assert.equal((await res.json()).scenario, 'cascading-failure');
+    assert.equal(inventory.received.length, 1);
+    assert.equal(inventory.received[0].body.type, 'latency');
+    assert.equal(notification.received.length, 1);
+    assert.equal(notification.received[0].body.type, 'crash');
+    assert.equal(chaosLock.isLocked(), true);
+  } finally {
+    chaosLock.release();
+    appServer.closeAllConnections();
+    inventory.server.closeAllConnections();
+    notification.server.closeAllConnections();
+    appServer.close();
+    inventory.server.close();
+    notification.server.close();
+  }
+});

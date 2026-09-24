@@ -1,9 +1,15 @@
 const express = require('express');
 const crypto = require('crypto');
+const { z } = require('zod');
 const { applyChaos, getStatus } = require('../chaosState');
 
 const router = express.Router();
-const VALID_TYPES = ['latency', 'error_rate', 'crash'];
+
+const chaosBodySchema = z.object({
+  type: z.enum(['latency', 'error_rate', 'crash']),
+  durationSec: z.number().int().positive().max(300).optional(),
+  severity: z.string().optional(),
+});
 
 // If CHAOS_SECRET is set, only callers presenting it (the control
 // plane) can inject faults — closes the "anyone can crash the public
@@ -26,16 +32,13 @@ router.post('/chaos', (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
 
-  const { type, durationSec, severity } = req.body || {};
-
-  if (!VALID_TYPES.includes(type)) {
-    return res.status(400).json({ error: `type must be one of ${VALID_TYPES.join(', ')}` });
+  const parsed = chaosBodySchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: `type must be one of latency, error_rate, crash` });
   }
 
-  // Capped: an uncapped durationSec (e.g. from a malformed or hostile
-  // caller) could otherwise hold the service degraded indefinitely.
-  const MAX_DURATION_SEC = 300;
-  const duration = Number.isInteger(durationSec) && durationSec > 0 ? Math.min(durationSec, MAX_DURATION_SEC) : 30;
+  const { type, durationSec, severity } = parsed.data;
+  const duration = durationSec ?? 30;
   const result = applyChaos(type, duration, severity);
 
   res.json({ applied: true, type, expiresAt: result.expiresAt });

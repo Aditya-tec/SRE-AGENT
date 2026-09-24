@@ -1,4 +1,5 @@
 const express = require('express');
+const { z } = require('zod');
 const { recordPendingTrigger } = require('../triggerContext');
 const chaosLock = require('../chaosLock');
 
@@ -14,6 +15,49 @@ const SERVICE_URLS = {
 const VALID_FAULTS = ['latency', 'error_rate', 'crash'];
 const DEFAULT_DURATION_SEC = 30;
 
+// Named multi-step scenarios — orchestrate existing /chaos endpoints
+// in sequence. No new subsystems.
+const SCENARIOS = {
+  'cascading-failure': [
+    { service: 'inventory-service', faultType: 'latency', waitSec: 10 },
+    { service: 'notification-service', faultType: 'crash', waitSec: 0 },
+  ],
+  'dual-replica-pressure': [
+    { service: 'order-service-a', faultType: 'latency', waitSec: 5 },
+    { service: 'order-service-b', faultType: 'error_rate', waitSec: 0 },
+  ],
+  'inventory-then-orders': [
+    { service: 'inventory-service', faultType: 'error_rate', waitSec: 8 },
+    { service: 'order-service-a', faultType: 'latency', waitSec: 0 },
+  ],
+};
+
+const breakItSchema = z
+  .object({
+    service: z.string().optional(),
+    faultType: z.enum(VALID_FAULTS).optional(),
+    triggerType: z.enum(['manual', 'autonomous']).optional(),
+    scenario: z.string().optional(),
+  })
+  .refine((b) => b.scenario || (b.service && b.faultType), {
+    message: 'provide either scenario or service+faultType',
+  });
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function injectChaos(service, faultType) {
+  await fetch(`${SERVICE_URLS[service]}/chaos`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(process.env.CHAOS_SECRET ? { 'x-chaos-secret': process.env.CHAOS_SECRET } : {}),
+    },
+    body: JSON.stringify({ type: faultType, durationSec: DEFAULT_DURATION_SEC }),
+  });
+}
+
 // All chaos flows through here (dashboard button and the scheduled
 // GitHub Action alike) so it's logged consistently in one place.
 router.post('/break-it', async (req, res) => {
@@ -21,7 +65,40 @@ router.post('/break-it', async (req, res) => {
     return res.status(409).json({ error: 'an incident is already being investigated — try again shortly' });
   }
 
-  const { service, faultType, triggerType } = req.body || {};
+  const parsed = breakItSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0].message });
+  }
+
+  const { service, faultType, triggerType, scenario } = parsed.data;
+
+  if (scenario) {
+    const steps = SCENARIOS[scenario];
+    if (!steps) {
+      return res.status(400).json({
+        error: `scenario must be one of ${Object.keys(SCENARIOS).join(', ')}`,
+      });
+    }
+
+    chaosLock.acquire();
+    try {
+      for (const [i, step] of steps.entries()) {
+        if (!Object.prototype.hasOwnProperty.call(SERVICE_URLS, step.service)) {
+          throw new Error(`unknown service in scenario: ${step.service}`);
+        }
+        recordPendingTrigger(step.service, triggerType === 'autonomous' ? 'autonomous' : 'manual');
+        await injectChaos(step.service, step.faultType);
+        if (step.waitSec > 0 && i < steps.length - 1) {
+          await sleep(step.waitSec * 1000);
+        }
+      }
+    } catch (err) {
+      chaosLock.release();
+      return res.status(502).json({ error: `scenario failed: ${err.message}` });
+    }
+
+    return res.status(202).json({ incidentIdPending: true, scenario });
+  }
 
   // Object.prototype.hasOwnProperty, not the `in` operator: `in` also
   // matches inherited keys, so a request with service: "constructor" or
@@ -30,21 +107,11 @@ router.post('/break-it', async (req, res) => {
   if (typeof service !== 'string' || !Object.prototype.hasOwnProperty.call(SERVICE_URLS, service)) {
     return res.status(400).json({ error: `service must be one of ${Object.keys(SERVICE_URLS).join(', ')}` });
   }
-  if (!VALID_FAULTS.includes(faultType)) {
-    return res.status(400).json({ error: `faultType must be one of ${VALID_FAULTS.join(', ')}` });
-  }
 
   recordPendingTrigger(service, triggerType === 'autonomous' ? 'autonomous' : 'manual');
 
   try {
-    await fetch(`${SERVICE_URLS[service]}/chaos`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(process.env.CHAOS_SECRET ? { 'x-chaos-secret': process.env.CHAOS_SECRET } : {}),
-      },
-      body: JSON.stringify({ type: faultType, durationSec: DEFAULT_DURATION_SEC }),
-    });
+    await injectChaos(service, faultType);
   } catch (err) {
     return res.status(502).json({ error: `failed to reach ${service}: ${err.message}` });
   }
@@ -57,3 +124,4 @@ router.post('/break-it', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.SCENARIOS = SCENARIOS;

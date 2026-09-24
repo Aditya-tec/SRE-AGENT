@@ -4,11 +4,19 @@ const gatewayState = require('./gatewayState');
 const MAX_ATTEMPTS = 3;
 const RENDER_API_BASE = 'https://api.render.com/v1';
 
+// ponytail: in-memory idempotency; lost on restart (fine — retries are
+// same-process duplicates from the poller / upstream caller, not cross-boot).
+const priorResults = new Map();
+
 let RENDER_SERVICE_IDS = {};
 try {
   RENDER_SERVICE_IDS = JSON.parse(process.env.RENDER_SERVICE_IDS || '{}');
 } catch (err) {
   console.error('[remediate] RENDER_SERVICE_IDS is not valid JSON, restarts will fail:', err.message);
+}
+
+function idempotencyKey(incidentId, attemptNumber) {
+  return `${incidentId}:${attemptNumber}`;
 }
 
 async function callRenderRestart(serviceName) {
@@ -56,31 +64,41 @@ async function executeAction(action, serviceName) {
   }
 }
 
-async function remediate(incident, action) {
+async function remediate(incident, action, attemptNumber = 1) {
+  const key = idempotencyKey(incident.id, attemptNumber);
+  if (priorResults.has(key)) {
+    console.log(`[remediate] idempotent skip for ${key} — returning prior result`);
+    return priorResults.get(key);
+  }
+
+  let result;
   if (action === 'monitor') {
-    console.log(`[remediate] incident ${incident.id}: low-confidence diagnosis, monitoring only`);
-    return { success: true, action: 'monitor' };
+    console.log(`[remediate] incident ${incident.id}: monitoring only (attempt ${attemptNumber})`);
+    result = { success: true, action: 'monitor' };
+  } else {
+    // Log the action BEFORE execution — an audit trail must exist even if
+    // the action itself fails. A DB write failure here must not abort
+    // remediation uncaught: that would leave the incident's in-memory
+    // tracking (and the chaos lock) permanently stuck, since only
+    // resolveIncident() ever clears either.
+    try {
+      await db.updateIncident(incident.id, { remediation_action: action });
+    } catch (err) {
+      console.error(`[remediate] incident ${incident.id}: failed to record remediation_action:`, err.message);
+    }
+
+    try {
+      await executeAction(action, incident.service_name);
+      console.log(`[remediate] incident ${incident.id}: ${action} succeeded on ${incident.service_name}`);
+      result = { success: true, action };
+    } catch (err) {
+      console.error(`[remediate] incident ${incident.id}: ${action} failed:`, err.message);
+      result = { success: false, action, error: err.message };
+    }
   }
 
-  // Log the action BEFORE execution — an audit trail must exist even if
-  // the action itself fails. A DB write failure here must not abort
-  // remediation uncaught: that would leave the incident's in-memory
-  // tracking (and the chaos lock) permanently stuck, since only
-  // resolveIncident() ever clears either.
-  try {
-    await db.updateIncident(incident.id, { remediation_action: action });
-  } catch (err) {
-    console.error(`[remediate] incident ${incident.id}: failed to record remediation_action:`, err.message);
-  }
-
-  try {
-    await executeAction(action, incident.service_name);
-    console.log(`[remediate] incident ${incident.id}: ${action} succeeded on ${incident.service_name}`);
-    return { success: true, action };
-  } catch (err) {
-    console.error(`[remediate] incident ${incident.id}: ${action} failed:`, err.message);
-    return { success: false, action, error: err.message };
-  }
+  priorResults.set(key, result);
+  return result;
 }
 
 function clearRateLimitFor(serviceName) {
