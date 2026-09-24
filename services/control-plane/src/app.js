@@ -9,6 +9,7 @@ const gatewayRoute = require('./routes/gateway');
 const breakItRoute = require('./routes/breakIt');
 const statusRoute = require('./routes/status');
 const queryRoute = require('./routes/query');
+const metricsRoute = require('./routes/metrics');
 
 function corsOptions() {
   const origins = process.env.DASHBOARD_ORIGIN
@@ -80,6 +81,7 @@ function createApp() {
   app.use(breakItRoute);
   app.use('/query', queryLimiter);
   app.use(queryRoute);
+  app.use(metricsRoute);
 
   app.use((err, req, res, next) => {
     console.error('[control-plane] unhandled error:', err.message);
