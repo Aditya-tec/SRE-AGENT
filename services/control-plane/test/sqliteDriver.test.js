@@ -71,6 +71,65 @@ test('insertIncident round-trips booleans and JSON context correctly', async () 
   assert.equal(updatedFalse.remediation_success, false, 'false must round-trip as false, not null');
 });
 
+test('is_flapping defaults to false and round-trips as a real boolean, not 0/1', async () => {
+  const db = freshDriver();
+  await db.upsertService('order-service-a', { status: 'degraded' });
+
+  const incident = await db.insertIncident({
+    service_name: 'order-service-a',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:00:00.000Z',
+  });
+  assert.equal(incident.is_flapping, false, 'default should be false, not 0 or null');
+
+  const flapping = await db.insertIncident({
+    service_name: 'order-service-a',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:05:00.000Z',
+    is_flapping: true,
+  });
+  assert.equal(flapping.is_flapping, true);
+
+  const fetched = await db.getIncident(flapping.id);
+  assert.equal(fetched.is_flapping, true, 'should read back as a real boolean, not 1');
+});
+
+test('countRecentIncidents counts only incidents for that service at/after the cutoff', async () => {
+  const db = freshDriver();
+  await db.upsertService('order-service-a', { status: 'degraded' });
+  await db.upsertService('order-service-b', { status: 'healthy' });
+
+  await db.insertIncident({
+    service_name: 'order-service-a',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:00:00.000Z', // before the cutoff — excluded
+  });
+  await db.insertIncident({
+    service_name: 'order-service-a',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:10:00.000Z', // at the cutoff — included
+  });
+  await db.insertIncident({
+    service_name: 'order-service-a',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:15:00.000Z',
+  });
+  await db.insertIncident({
+    service_name: 'order-service-b',
+    trigger_type: 'manual',
+    fault_type: 'crash',
+    detected_at: '2026-01-01T00:15:00.000Z', // different service — excluded
+  });
+
+  const count = await db.countRecentIncidents('order-service-a', '2026-01-01T00:10:00.000Z');
+  assert.equal(count, 2);
+});
+
 test('getUnresolvedIncident finds an open incident and ignores resolved ones', async () => {
   const db = freshDriver();
   await db.upsertService('notification-service', { status: 'healthy' });

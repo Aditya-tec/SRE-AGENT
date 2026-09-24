@@ -76,7 +76,10 @@ export default function IncidentDetailPage() {
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-mono text-xl">{incident.service_name}</h1>
-        <StatusBadge tone={PHASE_TONE[phase]} label={PHASE_LABELS[phase]} />
+        <div className="flex flex-wrap gap-1.5">
+          <StatusBadge tone={PHASE_TONE[phase]} label={PHASE_LABELS[phase]} />
+          {incident.is_flapping && <StatusBadge tone="warning" label="Flapping" />}
+        </div>
       </div>
       <p className="mt-1 text-sm text-ink-secondary">
         {incident.fault_type} fault · {incident.trigger_type} trigger

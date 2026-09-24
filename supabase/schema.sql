@@ -19,7 +19,8 @@ create table incidents (
   remediation_action text,
   remediation_success boolean,
   postmortem text,
-  raw_context jsonb
+  raw_context jsonb,
+  is_flapping boolean not null default false
 );
 
 create table metrics_snapshots (

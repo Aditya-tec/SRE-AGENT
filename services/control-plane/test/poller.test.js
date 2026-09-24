@@ -39,6 +39,8 @@ function installFakeDb() {
   };
   db.listIncidents = async (limit) => [...incidents.values()].slice(0, limit);
   db.getIncident = async (id) => incidents.get(id) || null;
+  db.countRecentIncidents = async (serviceName, sinceIso) =>
+    [...incidents.values()].filter((i) => i.service_name === serviceName && i.detected_at >= sinceIso).length;
 
   return incidents;
 }
@@ -180,6 +182,51 @@ test('a service that recovers mid-incident reaches Resolved after 2 consecutive 
 
     assert.ok(resolved, 'incident should resolve once the service recovers');
     assert.equal(resolved.remediation_success, true);
+  } finally {
+    flaky.close();
+    healthyStub.close();
+  }
+});
+
+test('flapping: a service that opens 3 incidents within the window gets the 3rd tagged is_flapping', async () => {
+  const incidents = installFakeDb();
+  let isHealthy = false;
+  const flaky = await startHealthServer({ healthy: () => isHealthy });
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${flaky.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${healthyStub.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+
+    const opened = [];
+    for (let round = 0; round < 3; round++) {
+      isHealthy = false;
+      let incident;
+      for (let cycle = 0; cycle < 6 && !incident; cycle++) {
+        await poller.pollAll();
+        incident = [...incidents.values()].find(
+          (i) => i.service_name === 'order-service-a' && !opened.some((o) => o.id === i.id)
+        );
+      }
+      assert.ok(incident, `round ${round}: incident should have opened`);
+      opened.push(incident);
+
+      isHealthy = true;
+      let resolved;
+      for (let cycle = 0; cycle < 6 && !resolved; cycle++) {
+        await poller.pollAll();
+        const current = incidents.get(incident.id);
+        if (current.resolved_at) resolved = current;
+      }
+      assert.ok(resolved, `round ${round}: incident should have resolved before the next round`);
+    }
+
+    const flags = opened.map((i) => incidents.get(i.id).is_flapping);
+    assert.deepEqual(flags, [false, false, true], 'only the 3rd incident within the window should be tagged flapping');
   } finally {
     flaky.close();
     healthyStub.close();
@@ -365,6 +412,44 @@ test('call-chain bundling: inventory + order latency in the same window opens on
     assert.equal(open[0].service_name, 'inventory-service', 'upstream dep should own the bundled incident');
   } finally {
     slow.close();
+    healthyStub.close();
+  }
+});
+
+test('simultaneous but unrelated faults open as two separate incidents, not bundled', async () => {
+  // inventory-service and notification-service are each other's call-chain
+  // "cousins" (both list order-service-a/-b as neighbors) but neither
+  // lists the other — CALL_CHAIN has no edge between them. A fault on
+  // both at once must NOT be merged by the bundling logic that exists
+  // to correlate genuine upstream/downstream symptoms; these are two
+  // independent root causes and must stay two independent incidents.
+  const incidents = installFakeDb();
+  const slow = await startLatencyServer(5000);
+  const down = await startHealthServer({ healthy: () => false });
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${healthyStub.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${slow.address().port}`,
+      notification: `http://localhost:${down.address().port}`,
+    });
+
+    for (let cycle = 0; cycle < 4; cycle++) {
+      await poller.pollAll();
+    }
+
+    const open = [...incidents.values()].filter((i) => !i.resolved_at);
+    const openServices = open.map((i) => i.service_name).sort();
+    assert.deepEqual(
+      openServices,
+      ['inventory-service', 'notification-service'],
+      `expected two separate unbundled incidents, got: ${openServices.join(',')}`
+    );
+  } finally {
+    slow.close();
+    down.close();
     healthyStub.close();
   }
 });
