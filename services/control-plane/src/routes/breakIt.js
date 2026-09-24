@@ -108,15 +108,24 @@ router.post('/break-it', async (req, res) => {
     return res.status(400).json({ error: `service must be one of ${Object.keys(SERVICE_URLS).join(', ')}` });
   }
 
+  // Acquired synchronously, before the first await below — not after
+  // injectChaos() resolves. The isLocked() check above and this acquire()
+  // must be one atomic step with no `await` between them, or concurrent
+  // requests all read isLocked() as false before any of them sets it,
+  // and all sail through (confirmed empirically: 10 simultaneous
+  // requests each got a 202 when acquire() ran post-await). Node is
+  // single-threaded, so two synchronous statements back to back can't
+  // interleave — only a suspended `await` gives another request's
+  // handler a chance to run in between.
+  chaosLock.acquire();
   recordPendingTrigger(service, triggerType === 'autonomous' ? 'autonomous' : 'manual');
 
   try {
     await injectChaos(service, faultType);
   } catch (err) {
+    chaosLock.release();
     return res.status(502).json({ error: `failed to reach ${service}: ${err.message}` });
   }
-
-  chaosLock.acquire();
 
   // The incidents row is created once the poller's debounce confirms
   // the fault, not synchronously here.

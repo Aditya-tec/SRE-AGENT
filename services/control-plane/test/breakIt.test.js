@@ -164,6 +164,64 @@ test('POST /break-it lock check happens before request-body validation', async (
   });
 });
 
+test('POST /break-it: two truly concurrent requests only let one through (lock acquired before the await, not after)', async () => {
+  // A load test against the running stack (scripts/load-test.js) caught
+  // this for real: chaosLock.acquire() used to run after `await
+  // injectChaos(...)`, so N simultaneous requests could all observe
+  // isLocked() === false before any of them set it, and all got a 202.
+  // Widening the target server's response delay here reproduces that
+  // race deterministically instead of depending on scheduler luck.
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      received.push(body ? JSON.parse(body) : {});
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ applied: true }));
+      }, 50);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  server.unref();
+
+  process.env.INVENTORY_URL = `http://localhost:${server.address().port}`;
+  process.env.ORDER_A_URL = 'http://localhost:1';
+  process.env.ORDER_B_URL = 'http://localhost:1';
+  process.env.NOTIFICATION_URL = 'http://localhost:1';
+
+  for (const mod of ['../src/routes/breakIt', '../src/triggerContext', '../src/chaosLock']) {
+    delete require.cache[require.resolve(mod)];
+  }
+  const breakItRoute = require('../src/routes/breakIt');
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use(breakItRoute);
+  const appServer = app.listen(0);
+  appServer.unref();
+  const baseUrl = `http://localhost:${appServer.address().port}`;
+  const chaosLock = require('../src/chaosLock');
+
+  try {
+    const body = JSON.stringify({ service: 'inventory-service', faultType: 'latency' });
+    const [first, second] = await Promise.all([
+      fetch(`${baseUrl}/break-it`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+      fetch(`${baseUrl}/break-it`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    assert.deepEqual(statuses, [202, 409], 'exactly one request should be accepted, the other rejected by the lock');
+    assert.equal(received.length, 1, 'the target service should only have been called once');
+  } finally {
+    chaosLock.release();
+    appServer.closeAllConnections();
+    server.closeAllConnections();
+    appServer.close();
+    server.close();
+  }
+});
+
 test('POST /break-it scenario orchestrates chaos steps in sequence', async () => {
   const inventory = await startMockChaosServer();
   const notification = await startMockChaosServer();
