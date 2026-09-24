@@ -1,6 +1,8 @@
 const Groq = require('groq-sdk');
 
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+// See diagnose.js for why this isn't llama-3.3-70b-versatile anymore —
+// that model was retired from Groq's catalog and 404s on every call.
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 const GROQ_TIMEOUT_MS = 10000;
 
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
