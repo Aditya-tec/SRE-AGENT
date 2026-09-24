@@ -36,7 +36,10 @@ export default function IncidentTimeline({ incidents }) {
                 </td>
                 <td className="px-4 py-3 font-mono text-ink-secondary">{incident.fault_type}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge tone={PHASE_TONE[phase]} label={PHASE_LABELS[phase]} />
+                  <div className="flex flex-wrap gap-1.5">
+                    <StatusBadge tone={PHASE_TONE[phase]} label={PHASE_LABELS[phase]} />
+                    {incident.is_flapping && <StatusBadge tone="warning" label="Flapping" />}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-ink-secondary">{incident.trigger_type}</td>
                 <td className="px-4 py-3 font-mono text-ink-muted">{formatTimestamp(incident.detected_at)}</td>

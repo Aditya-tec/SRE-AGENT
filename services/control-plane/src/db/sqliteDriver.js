@@ -41,7 +41,8 @@ db.exec(`
     remediation_action TEXT,
     remediation_success INTEGER,
     postmortem TEXT,
-    raw_context TEXT
+    raw_context TEXT,
+    is_flapping INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS metrics_snapshots (
@@ -58,10 +59,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_incidents_detected ON incidents(detected_at DESC);
 `);
 
+// CREATE TABLE IF NOT EXISTS above is a no-op against a local.db file
+// that already existed before a column was added here — SQLite needs
+// an explicit ALTER TABLE for that case (local.db is gitignored and
+// personal-machine-only, so this is the only migration path it gets).
+const incidentColumns = db.prepare('PRAGMA table_info(incidents)').all().map((c) => c.name);
+if (!incidentColumns.includes('is_flapping')) {
+  db.exec('ALTER TABLE incidents ADD COLUMN is_flapping INTEGER NOT NULL DEFAULT 0');
+}
+
 function toIncidentRow(fields) {
   const row = { ...fields };
   if ('remediation_success' in row) {
     row.remediation_success = row.remediation_success == null ? null : row.remediation_success ? 1 : 0;
+  }
+  if ('is_flapping' in row) {
+    row.is_flapping = row.is_flapping ? 1 : 0;
   }
   if ('raw_context' in row && row.raw_context != null && typeof row.raw_context === 'object') {
     row.raw_context = JSON.stringify(row.raw_context);
@@ -74,6 +87,7 @@ function fromIncidentRow(row) {
   return {
     ...row,
     remediation_success: row.remediation_success === null ? null : !!row.remediation_success,
+    is_flapping: !!row.is_flapping,
     raw_context: row.raw_context ? JSON.parse(row.raw_context) : null,
   };
 }
@@ -146,14 +160,22 @@ async function insertIncident(incident) {
     remediation_success: null,
     postmortem: null,
     raw_context: null,
+    is_flapping: false,
     ...incident,
     id,
   });
   db.prepare(
-    `INSERT INTO incidents (id, service_name, trigger_type, fault_type, detected_at, diagnosed_at, remediated_at, resolved_at, root_cause, remediation_action, remediation_success, postmortem, raw_context)
-     VALUES (@id, @service_name, @trigger_type, @fault_type, @detected_at, @diagnosed_at, @remediated_at, @resolved_at, @root_cause, @remediation_action, @remediation_success, @postmortem, @raw_context)`
+    `INSERT INTO incidents (id, service_name, trigger_type, fault_type, detected_at, diagnosed_at, remediated_at, resolved_at, root_cause, remediation_action, remediation_success, postmortem, raw_context, is_flapping)
+     VALUES (@id, @service_name, @trigger_type, @fault_type, @detected_at, @diagnosed_at, @remediated_at, @resolved_at, @root_cause, @remediation_action, @remediation_success, @postmortem, @raw_context, @is_flapping)`
   ).run(row);
   return getIncident(id);
+}
+
+async function countRecentIncidents(serviceName, sinceIso) {
+  const row = db
+    .prepare('SELECT COUNT(*) AS count FROM incidents WHERE service_name = ? AND detected_at >= ?')
+    .get(serviceName, sinceIso);
+  return row.count;
 }
 
 async function updateIncident(id, fields) {
@@ -187,4 +209,5 @@ module.exports = {
   updateIncident,
   listIncidents,
   getIncident,
+  countRecentIncidents,
 };

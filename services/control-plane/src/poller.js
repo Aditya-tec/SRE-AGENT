@@ -11,6 +11,14 @@ const POLL_INTERVAL_MS = 5000;
 const FETCH_TIMEOUT_MS = 3000;
 const VERIFY_HEALTHY_CYCLES = 2;
 
+// A service that opens FLAPPING_THRESHOLD_COUNT+ incidents within
+// FLAPPING_WINDOW_MS is tagged is_flapping — distinct from a clean
+// one-off, since repeated open/resolve cycles usually mean the
+// underlying problem was never actually fixed (or the fault itself is
+// inherently intermittent), not that remediation is working.
+const FLAPPING_WINDOW_MS = 10 * 60 * 1000;
+const FLAPPING_THRESHOLD_COUNT = 3;
+
 const SERVICES = {
   'order-service-a': process.env.ORDER_A_URL || 'http://localhost:3001',
   'order-service-b': process.env.ORDER_B_URL || 'http://localhost:3011',
@@ -113,12 +121,23 @@ async function openIncident(serviceName, evaluation) {
       return;
     }
 
+    const windowStart = new Date(Date.now() - FLAPPING_WINDOW_MS).toISOString();
+    const recentCount = await db.countRecentIncidents(serviceName, windowStart);
+    // recentCount is prior incidents only (this one hasn't been
+    // inserted yet) — +1 counts the one about to open.
+    const isFlapping = recentCount + 1 >= FLAPPING_THRESHOLD_COUNT;
+
     incident = await db.insertIncident({
       service_name: serviceName,
       trigger_type: consumePendingTrigger(serviceName),
       fault_type: evaluation.faultType,
       detected_at: new Date().toISOString(),
+      is_flapping: isFlapping,
     });
+
+    if (isFlapping) {
+      console.log(`[poller] ${serviceName} is flapping: ${recentCount + 1} incidents within ${FLAPPING_WINDOW_MS / 60000}min`);
+    }
 
     console.log(`[poller] state transition -> Detected: ${serviceName} (${evaluation.reason}), incident ${incident.id}`);
     await notifyDiscord(`🔴 Incident: ${serviceName} — ${evaluation.faultType}`);

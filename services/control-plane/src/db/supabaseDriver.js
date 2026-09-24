@@ -80,6 +80,16 @@ async function getIncident(id) {
   return data;
 }
 
+async function countRecentIncidents(serviceName, sinceIso) {
+  const { count, error } = await supabase
+    .from('incidents')
+    .select('*', { count: 'exact', head: true })
+    .eq('service_name', serviceName)
+    .gte('detected_at', sinceIso);
+  if (error) throw error;
+  return count || 0;
+}
+
 module.exports = {
   upsertService,
   listServices,
@@ -91,4 +101,5 @@ module.exports = {
   updateIncident,
   listIncidents,
   getIncident,
+  countRecentIncidents,
 };

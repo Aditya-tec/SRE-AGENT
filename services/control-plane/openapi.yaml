@@ -182,6 +182,13 @@ components:
         raw_context:
           type: object
           nullable: true
+        is_flapping:
+          type: boolean
+          description: >-
+            True if this service opened 3+ incidents within a 10-minute
+            window (this one included) — usually means the underlying
+            problem wasn't actually fixed by remediation, or the fault
+            is inherently intermittent.
   responses:
     Error:
       description: Error payload
