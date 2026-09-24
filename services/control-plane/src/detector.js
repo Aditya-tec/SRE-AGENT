@@ -45,4 +45,19 @@ function evaluate(serviceName, metrics) {
   return { ...result, state: 'suspected', faultType };
 }
 
-module.exports = { detectAnomaly, evaluate };
+// Called once an incident resolves (Resolved or terminal Unresolved),
+// so a fault that's still active doesn't reopen a brand-new incident
+// on the very next poll. In local dev, "restart" always fails (no
+// RENDER_API_KEY) and exhausts MAX_ATTEMPTS in ~15s, while a latency/
+// error_rate fault's own 30s timer is still running — without this
+// reset, that produced instant back-to-back incidents for the same
+// ongoing problem, since this module's debounce counter is
+// independent of poller.js's activeIncidents and never resets on its
+// own. A full reset requires the normal 2-cycle debounce again before
+// reopening — the underlying problem still gets caught if it's still
+// there, just without the instant flip-flop.
+function resetDebounce(serviceName) {
+  consecutiveFailures.delete(serviceName);
+}
+
+module.exports = { detectAnomaly, evaluate, resetDebounce };

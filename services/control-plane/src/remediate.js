@@ -63,8 +63,15 @@ async function remediate(incident, action) {
   }
 
   // Log the action BEFORE execution — an audit trail must exist even if
-  // the action itself fails.
-  await db.updateIncident(incident.id, { remediation_action: action });
+  // the action itself fails. A DB write failure here must not abort
+  // remediation uncaught: that would leave the incident's in-memory
+  // tracking (and the chaos lock) permanently stuck, since only
+  // resolveIncident() ever clears either.
+  try {
+    await db.updateIncident(incident.id, { remediation_action: action });
+  } catch (err) {
+    console.error(`[remediate] incident ${incident.id}: failed to record remediation_action:`, err.message);
+  }
 
   try {
     await executeAction(action, incident.service_name);

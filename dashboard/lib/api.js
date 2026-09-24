@@ -18,7 +18,7 @@ export function getIncidents(limit = 20) {
 }
 
 export function getIncident(id) {
-  return apiFetch(`/incidents/${id}`);
+  return apiFetch(`/incidents/${encodeURIComponent(id)}`);
 }
 
 export function breakIt(service, faultType) {

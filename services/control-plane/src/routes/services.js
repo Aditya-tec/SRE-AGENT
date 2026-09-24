@@ -16,7 +16,8 @@ router.get('/services', async (req, res) => {
       }))
     );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[services] GET /services failed:', err.message);
+    res.status(500).json({ error: 'failed to list services' });
   }
 });
 

@@ -36,9 +36,14 @@ function createApp() {
     })
   );
 
+  // Configurable so the local-dev seed script can fire many scenarios
+  // back to back (the chaos-in-progress lock already serializes them —
+  // this limit exists to stop a public, untrusted visitor from
+  // spamming the deployed demo, which doesn't apply to a single local
+  // operator). Unset, behavior is identical to before this existed.
   const breakItLimiter = rateLimit({
-    windowMs: 5 * 60 * 1000,
-    limit: 1,
+    windowMs: Number(process.env.BREAK_IT_RATE_LIMIT_WINDOW_MS) || 5 * 60 * 1000,
+    limit: Number(process.env.BREAK_IT_RATE_LIMIT_MAX) || 1,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'you can trigger one incident every 5 minutes — try again shortly' },

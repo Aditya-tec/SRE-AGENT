@@ -7,14 +7,21 @@ function avgMs(incidents, startKey, endKey) {
 }
 
 export default function MetricsSummary({ incidents }) {
-  const avgMttdMs = avgMs(incidents, 'detected_at', 'diagnosed_at');
+  // Labeled "Avg diagnose time", not "MTTD": the incident record has no
+  // timestamp for when a fault actually began (chaos injection is
+  // fire-and-forget and real degradations have no known onset either),
+  // so there's no reliable "time to detect" to compute. detected_at ->
+  // diagnosed_at is genuinely useful (and, with the no-GROQ fallback
+  // path, genuinely near-zero) — it just isn't MTTD, and labeling it
+  // that would misrepresent what the agent is actually doing here.
+  const avgDiagnoseMs = avgMs(incidents, 'detected_at', 'diagnosed_at');
   const avgMttrMs = avgMs(incidents, 'detected_at', 'resolved_at');
   const resolvedCount = incidents.filter((i) => i.resolved_at).length;
   const successCount = incidents.filter((i) => i.remediation_success === true).length;
   const successRate = resolvedCount > 0 ? (successCount / resolvedCount) * 100 : null;
 
   const tiles = [
-    { label: 'Avg MTTD', value: avgMttdMs != null ? `${(avgMttdMs / 1000).toFixed(1)}s` : '—' },
+    { label: 'Avg diagnose time', value: avgDiagnoseMs != null ? `${(avgDiagnoseMs / 1000).toFixed(1)}s` : '—' },
     { label: 'Avg MTTR', value: avgMttrMs != null ? `${(avgMttrMs / 1000).toFixed(1)}s` : '—' },
     { label: 'Auto-resolved', value: successRate != null ? `${successRate.toFixed(0)}%` : '—' },
   ];

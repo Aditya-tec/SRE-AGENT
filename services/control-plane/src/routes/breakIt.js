@@ -23,7 +23,11 @@ router.post('/break-it', async (req, res) => {
 
   const { service, faultType, triggerType } = req.body || {};
 
-  if (!(service in SERVICE_URLS)) {
+  // Object.prototype.hasOwnProperty, not the `in` operator: `in` also
+  // matches inherited keys, so a request with service: "constructor" or
+  // "toString" would otherwise slip past this allowlist check and be
+  // used to index SERVICE_URLS below.
+  if (typeof service !== 'string' || !Object.prototype.hasOwnProperty.call(SERVICE_URLS, service)) {
     return res.status(400).json({ error: `service must be one of ${Object.keys(SERVICE_URLS).join(', ')}` });
   }
   if (!VALID_FAULTS.includes(faultType)) {

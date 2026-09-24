@@ -7,7 +7,14 @@ const orders = new Map();
 
 const INVENTORY_URL = process.env.INVENTORY_URL || 'http://localhost:3002';
 const NOTIFICATION_URL = process.env.NOTIFICATION_URL || 'http://localhost:3003';
-const UPSTREAM_TIMEOUT_MS = 5000;
+// Must stay comfortably above the max possible chaos latency delay
+// (5000ms, chaosState.js's "high" severity upper bound) — otherwise a
+// latency fault races the caller's own timeout, the request gets
+// aborted client-side before the downstream service ever finishes
+// responding, and the downstream's own metrics never record the slow
+// request at all (its 'finish' event never fires on an aborted
+// connection) — which was silently breaking latency-fault detection.
+const UPSTREAM_TIMEOUT_MS = 8000;
 
 async function callUpstream(url, body) {
   const controller = new AbortController();

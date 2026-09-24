@@ -59,6 +59,23 @@ test('evaluate: a healthy poll resets the debounce counter', () => {
   assert.equal(afterReset.state, 'suspected');
 });
 
+test('resetDebounce forces a fresh 2-cycle debounce even if the anomaly never actually cleared', () => {
+  const { evaluate, resetDebounce } = freshDetector();
+
+  evaluate('svc-z', null); // suspected, count=1
+  const detected = evaluate('svc-z', null); // count=2 -> detected
+  assert.equal(detected.state, 'detected');
+
+  // Simulates resolveIncident() calling this once an incident closes
+  // (Resolved or Unresolved) while the underlying fault is still
+  // active — without it, the very next poll would instantly re-detect
+  // and reopen a new incident since the counter never dropped.
+  resetDebounce('svc-z');
+
+  const afterReset = evaluate('svc-z', null);
+  assert.equal(afterReset.state, 'suspected', 'should require a fresh debounce, not reopen instantly');
+});
+
 test('evaluate: maps each anomaly reason to the matching fault_type', () => {
   const { evaluate } = freshDetector();
 
