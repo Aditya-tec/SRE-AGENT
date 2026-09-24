@@ -7,6 +7,7 @@ const incidentsRoute = require('./routes/incidents');
 const servicesRoute = require('./routes/services');
 const gatewayRoute = require('./routes/gateway');
 const breakItRoute = require('./routes/breakIt');
+const statusRoute = require('./routes/status');
 
 function corsOptions() {
   const origins = process.env.DASHBOARD_ORIGIN
@@ -60,6 +61,7 @@ function createApp() {
 
   app.use(incidentsRoute);
   app.use(servicesRoute);
+  app.use(statusRoute);
   app.use(gatewayRoute);
   app.use('/break-it', breakItLimiter);
   app.use(breakItRoute);

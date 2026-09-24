@@ -44,3 +44,7 @@ export function approveIncident(id) {
 export function getConfidenceReport() {
   return apiFetch('/confidence-report');
 }
+
+export function getStatus() {
+  return apiFetch('/status');
+}
