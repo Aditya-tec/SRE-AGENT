@@ -1,8 +1,16 @@
 # Autonomous SRE Agent
 
+[![CI](https://github.com/Aditya-tec/SRE-AGENT/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya-tec/SRE-AGENT/actions/workflows/ci.yml)
+[![keep-alive](https://github.com/Aditya-tec/SRE-AGENT/actions/workflows/keep-alive.yml/badge.svg)](https://github.com/Aditya-tec/SRE-AGENT/actions/workflows/keep-alive.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A fully free-tier, self-healing distributed system: three microservices simulating an e-commerce order flow, a control-plane agent that detects, diagnoses via an LLM, and auto-remediates incidents, and a live dashboard with both autonomous background chaos and a manual "Break It" trigger — deployed on Render, Vercel, and Supabase at zero cost.
 
-**Live dashboard:** _not yet deployed — see [Deployment](#deployment) below. Once live, this line becomes the link and the invitation to click "Break It."_
+**Live dashboard: [sre-agent-eta.vercel.app](https://sre-agent-eta.vercel.app)** — click "Break It" and watch detection → diagnosis → remediation → resolution happen in real time, or just let it sit: a GitHub Action injects a random fault autonomously every ~2 hours. Public API: `https://control-plane-bjmf.onrender.com` ([OpenAPI spec](services/control-plane/openapi.yaml)).
+
+> First load may take up to ~50s — everything runs on Render's free tier, which sleeps backend services after ~15 min idle. A `keep-alive` GitHub Action pings them every 10 minutes, so this is rare in practice, not a sign anything's broken.
+
+**Contents:** [Why this exists](#why-this-exists) · [Architecture](#architecture) · [Tech stack](#tech-stack) · [Safety guardrails](#safety-guardrails) · [Security hardening](#security-hardening) · [Testing & CI](#testing--ci) · [How it works](#how-it-works) · [What I'd add next](#what-id-add-next) · [Status](#status) · [Local dev mode](#local-dev-mode--zero-external-accounts) · [Deployment](#deployment) · [License](#license)
 
 ## Why this exists
 
@@ -29,10 +37,11 @@ flowchart LR
     CP <-->|read/write incidents, metrics, services| DB[(Supabase Postgres)]
     CP -->|diagnose + postmortem| LLM[Groq LLM]
     CP -->|restart| Render[Render API]
-    DASH[Next.js dashboard] -->|GET /services, /incidents, POST /break-it| CP
+    DASH[Next.js dashboard] -->|GET /services, /incidents, POST /break-it, POST /query| CP
     GHA[GitHub Actions] -->|POST /break-it every ~2h| CP
     GHA -->|GET /health every 10m| Target
     GHA -->|GET /health every 10m| CP
+    PROM[Prometheus/Grafana] -.->|GET /metrics| CP
 ```
 
 ```mermaid
@@ -57,9 +66,11 @@ stateDiagram-v2
 | 3 target services + control plane | Node.js + Express | Minimal boilerplate for a handful of endpoints each; keeps the whole system in one language |
 | Dashboard | Next.js (App Router) + React + Tailwind | Fast to scaffold, server-side env vars for the control-plane URl |
 | Database | Supabase Postgres | Free tier, zero server setup, `@supabase/supabase-js` client |
-| LLM | Groq (`llama-3.3-70b-versatile`) | Free tier, fast inference — matters for a live "watch it diagnose" demo |
+| LLM | Groq (`openai/gpt-oss-120b`) | Free tier, fast inference — matters for a live "watch it diagnose" demo |
 | Hosting | Render (5 services) + Vercel (dashboard) | Genuinely free web services with no card, Git-connected auto-deploy, a REST API for programmatic restarts |
 | Scheduling | GitHub Actions | Free cron for keep-alive pings and autonomous chaos injection |
+| Logging | `pino` (JSON lines) | Structured, queryable fields (`incidentId`, `service`, `err`) instead of string-interpolated `console.log` |
+| Metrics export | Prometheus text exposition (`GET /metrics`) | Standard scrape format — a real Grafana/Prometheus instance can point at it directly |
 
 ## Safety guardrails
 
@@ -105,10 +116,10 @@ There is no login, no API key, no bot detection, no CAPTCHA anywhere in this sys
 
 ## Testing & CI
 
-90 automated tests across all 5 services (Node's built-in `node:test`, no test framework dependency), covering:
+130 automated tests across all 5 services (Node's built-in `node:test`, no test framework dependency), covering:
 
 - **Pure logic**: sliding-window metrics (the regression test for a real dilution bug found while building this — see the Phase 4 commit), chaos fault application/auto-clear, anomaly detection + debounce, gateway traffic-shift/rate-limit state, the chaos-in-progress lock, incident-phase derivation.
-- **Route-level integration tests**: real Express apps started on ephemeral ports, hit with real `fetch` calls — order flow (including "notification-service unreachable must not fail the order"), inventory reservation edge cases, the `CHAOS_SECRET` gate, `/break-it` validation, trigger-context wiring, and the lock/rate-limit rejection, the `/gateway/orders` replica routing and rate-limit rejection.
+- **Route-level integration tests**: real Express apps started on ephemeral ports, hit with real `fetch` calls — order flow (including "notification-service unreachable must not fail the order"), inventory reservation edge cases, the `CHAOS_SECRET` gate, `/break-it` validation, trigger-context wiring, and the lock/rate-limit rejection, the `/gateway/orders` replica routing and rate-limit rejection, `/metrics`' Prometheus-format output, and `/query`'s request shape — including an explicit assertion that the completion request sent to the LLM never includes a `tools`/`functions` field, so it has no mechanism to invoke anything even if a question tries to talk it into one.
 - **The full incident state machine**, end to end, against an in-memory stubbed database and real mock HTTP servers: a permanently-down service reaching `Unresolved` after exactly 3 attempts, a service that recovers reaching `Resolved` after 2 healthy polls, the duplicate-incident guard holding under repeated detection cycles, the overlap guard proving a slow cycle is never run twice concurrently, `lastPollAt` advancing each cycle, and the chaos lock releasing once its incident resolves.
 
 `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run build` (dashboard only), a client-bundle secret-leakage check (dashboard only), and `npm audit --audit-level=high` for all 5 services on every push/PR to `main`, plus a YAML-validation job for `render.yaml`, `dependabot.yml`, and the other workflows. `.github/dependabot.yml` additionally checks all 5 `npm` projects plus the GitHub Actions themselves weekly, so CVEs disclosed *after* a deploy get caught too. Run locally: `cd <service> && npm test`.
@@ -124,18 +135,15 @@ One real bug this test suite caught while building it, worth naming: `node --tes
 
 ## What I'd add next
 
-In priority order — the top few are the ones I'd actually do first, not just a wishlist:
+In priority order — the top few are the ones I'd actually do first, not just a wishlist. (Confidence-weighted remediation, the chaos scenario library, and structured logging were on this list in earlier drafts — all three are now built; see [Status](#status).)
 
-1. **Confidence-weighted remediation policy** instead of the flat 3-attempt cap — `high` confidence proceeds immediately, `low` confidence defaults to `monitor` and only escalates if the anomaly persists another cycle. More realistic than a flat cap, and a better interview story.
-2. **Organic-vs-injected load distinction** — have the traffic generator occasionally burst (e.g. 5x rate, no chaos injected) and check whether diagnosis correctly reports "this looks like organic load, not a fault" instead of false-alarming. Materially harder and more impressive than anything else on this list — the single most defensible AI claim available here, because it requires the model to reason about absence of a fault, not just pattern-match a threshold breach.
-3. **A small chaos scenario library** — named multi-step scenarios (e.g. "cascading failure": `latency` on inventory-service, wait 10s, then `crash` notification-service) instead of 3 flat fault types. Tests the correlated cross-service diagnosis far more convincingly than a single fault ever does.
-4. **Historical trend charts** on the dashboard — MTTD/MTTR are currently single running averages; a line chart of MTTR per incident over time is a much better screenshot for a launch post than a static number.
-5. **A shareable read-only postmortem link** (`/incidents/:id/share`, no auth needed) for linking one striking incident directly instead of the whole dashboard.
-6. **Structured logging** (pino/winston) across all 5 services in place of `console.log`, for a real correlated log trail.
-7. **Component-level dashboard tests** (jsdom + testing-library) — the 90 tests cover `lib/` logic and Playwright covers visual/console-error checks; React component behavior itself is still untested.
-8. Real chaos at the infrastructure level (killing a container/pod, not just an in-process fault flag) — would need a platform with that primitive on the free tier.
-9. More fault types: partial network partitions, slow-DNS, clock skew.
-10. Alerting integrations beyond the optional Discord webhook (PagerDuty/Opsgenie-style escalation).
+1. **Organic-vs-injected load distinction** — have the traffic generator occasionally burst (e.g. 5x rate, no chaos injected) and check whether diagnosis correctly reports "this looks like organic load, not a fault" instead of false-alarming. Materially harder and more impressive than anything else on this list — the single most defensible AI claim available here, because it requires the model to reason about absence of a fault, not just pattern-match a threshold breach.
+2. **Historical trend charts** on the dashboard — MTTD/MTTR are currently single running averages; a line chart of MTTR per incident over time is a much better screenshot for a launch post than a static number.
+3. **A shareable read-only postmortem link** (`/incidents/:id/share`, no auth needed) for linking one striking incident directly instead of the whole dashboard.
+4. **Component-level dashboard tests** (jsdom + testing-library) — the current suite covers `lib/` logic and Playwright covers visual/console-error checks; React component behavior itself is still untested.
+5. Real chaos at the infrastructure level (killing a container/pod, not just an in-process fault flag) — would need a platform with that primitive on the free tier.
+6. More fault types: partial network partitions, slow-DNS, clock skew.
+7. Alerting integrations beyond the optional Discord webhook (PagerDuty/Opsgenie-style escalation).
 
 ## Status
 
@@ -147,16 +155,20 @@ In priority order — the top few are the ones I'd actually do first, not just a
 - [x] Phase 6 — Remediation (full state machine verified locally: restart/traffic_shift/rate_limit, retry-to-max-attempts, and recovery-to-Resolved)
 - [x] Phase 7 — Postmortem generation (fallback template verified; real Groq output needs `GROQ_API_KEY`)
 - [x] Phase 8 — Break-It endpoint + dashboard (built, verified visually with a mock API — needs a live control plane + Vercel deploy)
-- [x] Phase 9 — Scheduled chaos + keep-alive (workflows written and YAML-validated; live runs need Actions enabled on the deployed repo)
-- [ ] Phase 10 — Polish & metrics (needs a live system running for a day+ to accumulate real MTTD/MTTR numbers)
-- [ ] Phase 11 — Documentation & launch (this README is launch-ready except the live link)
-- [x] Hardening pass — 90 automated tests, CI (`ci.yml`) on every push/PR, `CHAOS_SECRET` gating, rate limiting, `helmet`, restricted CORS, 0 known high/critical vulnerabilities (see [Security hardening](#security-hardening) and [Testing & CI](#testing--ci))
+- [x] Phase 9 — Scheduled chaos + keep-alive (live on the deployed repo — `keep-alive` pings all 5 services every 10 min, `scheduled-chaos` injects a random fault every ~2h)
+- [x] Phase 10 — Polish & metrics (live and accumulating real MTTD/MTTR/success-rate numbers — see the [live dashboard](https://sre-agent-eta.vercel.app) for current figures rather than a stale snapshot here)
+- [x] Phase 11 — Documentation & launch (this README, live)
+- [x] Hardening pass — 130 automated tests, CI (`ci.yml`) on every push/PR, `CHAOS_SECRET` gating, rate limiting, `helmet`, restricted CORS, 0 known high/critical vulnerabilities (see [Security hardening](#security-hardening) and [Testing & CI](#testing--ci))
 - [x] Phase 2 hardening — chaos-in-progress lock + tighter per-IP rate limit on `/break-it`, dead-man's-switch on the poll loop (`lastPollAt`, overlap guard, per-cycle try/catch), Dependabot, git-history secrets scan, dashboard client-bundle secret-leakage check in CI (see [Safety guardrails](#safety-guardrails) and [Security hardening](#security-hardening))
 - [x] Local dev mode — pluggable SQLite/Supabase storage driver, one-command `npm run dev:all` (no external accounts, no `.env` setup), `npm run seed:demo` populating real incident history end to end, verified against the live API (see [Local dev mode](#local-dev-mode--zero-external-accounts))
 - [x] Live Supabase + Groq verified — schema applied to a real Supabase project and exercised end to end through the actual driver code (not a raw query); found and fixed a real bug along the way (`llama-3.3-70b-versatile` had been retired from Groq's catalog, silently forcing every diagnosis onto its fallback path even with a valid key — switched to `openai/gpt-oss-120b`, verified live)
 - [x] Confidence-weighted remediation, chaos scenario library, call-chain incident bundling, request validation (`zod`) across all 5 services, remediation idempotency, OpenAPI spec, configurable autonomy (`AUTO_REMEDIATE` + approve flow), flapping detection, confidence-calibration report, a public no-auth `/status` page, `gameday`/`load-test`/`sre-cli` tooling — see [Additional tooling](#additional-tooling)
+- [x] **Fully deployed and verified live** — all 5 Render services + Vercel dashboard confirmed healthy, `CORS` locked to the deployed dashboard origin, a real end-to-end incident (crash → diagnose → **real Render API restart** → verify → resolve → postmortem) triggered and confirmed against production, not just staged locally
+- [x] Structured logging (`pino`, JSON lines with `incidentId`/`service`/`err` fields) across all 4 backend services, replacing every `console.log`/`console.error` call
+- [x] `GET /metrics` — Prometheus-format export (service health, latency, error rate, MTTR, flapping count, open-incident count), scrapeable by a real Grafana/Prometheus instance
+- [x] `POST /query` — a natural-language status endpoint answered by Groq from live `incidents`/`services` data; structurally read-only (the completion request never carries a `tools`/`functions` field, so the model has no mechanism to invoke anything, even if asked to)
 
-Everything through Phase 9 is code-complete and tested as far as possible without external accounts — see each phase's commit message for exactly what was verified locally versus what still needs live Supabase/Groq/Render credentials to exercise for real.
+Everything above is deployed, live, and continuously exercised by the scheduled GitHub Actions — not just code-complete and locally verified.
 
 ## Local dev mode — zero external accounts
 
@@ -203,6 +215,8 @@ Three real, non-obvious bugs surfaced and got fixed while building this local-de
 - **Flapping detection**: a service that opens 3+ incidents within a rolling 10-minute window gets `is_flapping: true` on the 3rd (and later) incident, shown as a badge on the dashboard — a signal that remediation isn't actually fixing the underlying problem, not just a one-off blip.
 - **`GET /confidence-report`** — success rate of auto-remediation broken down by the diagnosis confidence level (`high`/`medium`/`low`) that recommended it, surfaced as its own dashboard section. Confidence was already computed to pick the remediation strategy but wasn't persisted anywhere queryable until this.
 - **`GET /status`** (and the dashboard's `/status` page) — a separate, public, no-auth view showing only per-service uptime % over the last 24h, deliberately excluding incident internals, root causes, or postmortems. Distinct from the main dashboard, which is the full operator view.
+- **`POST /query`** — ask a plain-English question ("what's happening with order-service?") and get an answer generated from the live `incidents`/`services` data. Rate-limited separately from `/break-it` (10/min/IP, looser since it's read-only and cheap). The interesting part isn't the feature, it's the constraint: the completion request sent to Groq never includes a `tools`/`functions` field, so there is no mechanism for the model to invoke anything, even if a question tries to talk it into restarting a service or triggering an incident — enforced structurally, not just by prompt wording.
+- **`GET /metrics`** — Prometheus text-exposition format (service health as a gauge, latency/error-rate gauges, `sre_incidents_open`, `sre_incident_mttr_seconds`, `sre_incidents_flapping_total`, incident counts by confidence level). Point a real Prometheus/Grafana instance at it and it just works.
 
 ### Verified
 
@@ -215,6 +229,8 @@ Fresh dashboard screenshots taken against this real local run, not a mock:
 ![Incident detail view — timeline, root cause, auto-generated postmortem](docs/screenshots/dashboard-incident.png)
 
 ## Deployment
+
+This repo is already deployed at the links at the top of this README — you don't need to do any of this to see it running. These are the steps to deploy your own copy (a fork, or the same repo under a different account).
 
 Deploying requires five free accounts: GitHub (existing), [Render](https://render.com), [Vercel](https://vercel.com), [Supabase](https://supabase.com), and [Groq](https://console.groq.com) — all sign up with GitHub, no card needed. Do them in this order:
 
@@ -287,6 +303,10 @@ Both hardcode the `https://<service-name>.onrender.com` URLs — update them if 
 1. [UptimeRobot](https://uptimerobot.com) (or any free uptime monitor) → new monitor → `https://control-plane.onrender.com/health`, checked every 5 minutes.
 2. Use a **keyword monitor** if the tool supports it, alerting if the response does *not* contain a `lastPollAt` value updated within the last ~2 minutes — a bare "is it a 200?" check would still pass even if the poll loop silently stopped, since the HTTP server itself would still be alive.
 
-### After deploying
+### After deploying your own copy
 
-Let the scheduled workflow run for a day or two, then pull the real numbers (avg MTTD, avg MTTR, % auto-resolved without hitting the attempt cap, autonomous vs. manual incident counts) from the dashboard for Phase 10/11 — the "47 incidents, 94% auto-resolved, avg MTTR 38s" kind of evidence that makes the project credible, not just the claim.
+Let the scheduled workflow run for a day or two, then pull the real numbers (avg MTTD, avg MTTR, % auto-resolved without hitting the attempt cap, autonomous vs. manual incident counts) from your dashboard — the "47 incidents, 94% auto-resolved, avg MTTR 38s" kind of evidence that makes the project credible, not just the claim. The [live instance](https://sre-agent-eta.vercel.app) already has this running continuously via its own scheduled chaos.
+
+## License
+
+[MIT](LICENSE) — do whatever you want with it.
