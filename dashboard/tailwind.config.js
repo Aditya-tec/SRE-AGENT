@@ -5,6 +5,7 @@ module.exports = {
     extend: {
       colors: {
         surface: 'var(--surface)',
+        'surface-raised': 'var(--surface-raised)',
         page: 'var(--page)',
         'ink-primary': 'var(--ink-primary)',
         'ink-secondary': 'var(--ink-secondary)',
@@ -17,7 +18,8 @@ module.exports = {
         critical: 'var(--status-critical)',
       },
       fontFamily: {
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+        sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
     },
   },

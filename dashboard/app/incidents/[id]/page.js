@@ -77,97 +77,167 @@ export default function IncidentDetailPage() {
   const mttr = formatDuration(incident.detected_at, incident.resolved_at);
 
   const steps = [
-    { label: 'Detected', at: incident.detected_at },
-    { label: 'Diagnosed', at: incident.diagnosed_at },
-    { label: 'Remediated', at: incident.remediated_at },
-    { label: 'Resolved', at: incident.resolved_at },
+    { label: 'Noticed', at: incident.detected_at },
+    { label: 'Found the cause', at: incident.diagnosed_at },
+    { label: 'Applied a fix', at: incident.remediated_at },
+    { label: 'Back to healthy', at: incident.resolved_at },
   ];
 
+  const FAULT_LABELS = {
+    crash: 'Crashed',
+    latency: 'Too slow',
+    error_rate: 'Returning errors',
+  };
+  const TRIGGER_LABELS = {
+    chaos: 'Break It',
+    organic: 'Real traffic',
+    synthetic: 'Test traffic',
+    gameday: 'Game day',
+  };
+  const whatBroke = FAULT_LABELS[incident.fault_type] || incident.fault_type;
+  const howStarted = TRIGGER_LABELS[incident.trigger_type] || incident.trigger_type;
+  const diagnosisFailed = /unavailable|failed/i.test(incident.root_cause || '');
+
   return (
-    <main className="mx-auto max-w-3xl px-4 py-10">
-      <Link href="/" className="text-sm text-accent hover:underline">
-        ← Back to dashboard
+    <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:py-8">
+      <Link
+        href="/#incidents"
+        className="inline-flex text-sm text-ink-muted transition hover:text-accent"
+      >
+        ← Back to problems
       </Link>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-mono text-xl">{incident.service_name}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-mono text-lg font-semibold tracking-tight sm:text-xl">
+            {incident.service_name}
+          </h1>
+          <p className="mt-1 text-sm text-ink-secondary">
+            {whatBroke} · started via {howStarted}
+          </p>
+        </div>
         <div className="flex flex-wrap gap-1.5">
           <StatusBadge tone={PHASE_TONE[phase]} label={PHASE_LABELS[phase]} />
-          {incident.is_flapping && <StatusBadge tone="warning" label="Flapping" />}
+          {incident.is_flapping && <StatusBadge tone="warning" label="Unstable" />}
         </div>
       </div>
-      <p className="mt-1 text-sm text-ink-secondary">
-        {incident.fault_type} fault · {incident.trigger_type} trigger
-      </p>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="text-xs uppercase text-ink-muted">Diagnose time</div>
-          <div className="mt-1 font-mono text-lg">{diagnoseTime}</div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="panel p-3">
+          <div className="section-label">Time to find cause</div>
+          <div className="mt-1.5 font-mono text-base text-ink-primary">{diagnoseTime}</div>
         </div>
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="text-xs uppercase text-ink-muted">MTTR</div>
-          <div className="mt-1 font-mono text-lg">{mttr}</div>
+        <div className="panel p-3">
+          <div className="section-label">Time to fix</div>
+          <div className="mt-1.5 font-mono text-base text-ink-primary">{mttr}</div>
         </div>
-        <div className="col-span-2 rounded-lg border border-border bg-surface p-4">
-          <div className="text-xs uppercase text-ink-muted">Remediation</div>
-          <div className="mt-1 font-mono text-lg">
+        <div className="panel col-span-2 p-3">
+          <div className="section-label">What the agent did</div>
+          <div className="mt-1.5 font-mono text-base text-ink-primary">
             {incident.remediation_action || '—'}{' '}
             {incident.remediation_success != null && (
-              <span style={{ color: incident.remediation_success ? 'var(--status-good)' : 'var(--status-critical)' }}>
-                ({incident.remediation_success ? 'succeeded' : 'failed'})
+              <span
+                style={{
+                  color: incident.remediation_success
+                    ? 'var(--status-good)'
+                    : 'var(--status-critical)',
+                }}
+              >
+                ({incident.remediation_success ? 'worked' : 'failed'})
               </span>
             )}
           </div>
         </div>
       </div>
 
-      <div className="mt-6 rounded-lg border border-border bg-surface p-4">
-        <h2 className="text-xs uppercase tracking-wide text-ink-muted">Timeline</h2>
-        <ol className="mt-3 space-y-2 text-sm">
-          {steps.map((step) => (
-            <li key={step.label} className="flex justify-between border-b border-border pb-2 last:border-0">
-              <span className={step.at ? 'text-ink-primary' : 'text-ink-muted'}>{step.label}</span>
-              <span className="font-mono text-ink-secondary">{formatTimestamp(step.at)}</span>
-            </li>
-          ))}
+      <div className="panel p-4">
+        <h2 className="section-label">What happened</h2>
+        <ol className="mt-3 space-y-0">
+          {steps.map((step, i) => {
+            const done = Boolean(step.at);
+            return (
+              <li key={step.label} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <span
+                    className={`mt-1.5 h-2.5 w-2.5 rounded-full ${done ? 'bg-good' : 'bg-white/15'}`}
+                    aria-hidden="true"
+                  />
+                  {i < steps.length - 1 && (
+                    <span className={`w-px flex-1 ${done ? 'bg-good/40' : 'bg-border'}`} />
+                  )}
+                </div>
+                <div className="flex flex-1 justify-between gap-3 pb-4">
+                  <span className={done ? 'text-base text-ink-primary' : 'text-base text-ink-muted'}>
+                    {step.label}
+                  </span>
+                  <span className="font-mono text-sm text-ink-muted">
+                    {formatTimestamp(step.at)}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
         </ol>
       </div>
 
       {incident.root_cause && (
-        <div className="mt-6 rounded-lg border p-4" style={{ borderColor: 'rgba(57,135,229,0.4)', backgroundColor: 'rgba(57,135,229,0.1)' }}>
-          <h2 className="text-xs uppercase tracking-wide text-ink-muted">Root Cause</h2>
-          <p className="mt-2 text-sm text-ink-primary">{incident.root_cause}</p>
+        <div className="panel relative overflow-hidden p-4">
+          <span
+            className="absolute inset-y-0 left-0 w-0.5"
+            style={{
+              backgroundColor: diagnosisFailed ? 'var(--status-critical)' : 'var(--accent)',
+            }}
+            aria-hidden="true"
+          />
+          <div className="pl-2">
+            <h2 className="section-label" style={diagnosisFailed ? { color: 'var(--status-critical)' } : undefined}>
+              {diagnosisFailed ? 'Diagnosis failed' : 'Why it broke'}
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-ink-secondary">{incident.root_cause}</p>
+          </div>
         </div>
       )}
 
       {phase === 'awaiting_approval' && (
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4" style={{ borderColor: 'var(--status-serious)', backgroundColor: 'rgba(236,131,90,0.1)' }}>
-          <div>
-            <h2 className="text-xs uppercase tracking-wide text-ink-muted">Autonomy paused</h2>
-            <p className="mt-1 text-sm text-ink-primary">
-              AUTO_REMEDIATE is off — this incident is diagnosed but remediation is on hold until approved.
-            </p>
-            {approveError && (
-              <p className="mt-1 text-sm" style={{ color: 'var(--status-critical)' }}>
-                {approveError}
+        <div className="panel relative overflow-hidden p-4">
+          <span
+            className="absolute inset-y-0 left-0 w-0.5"
+            style={{ backgroundColor: 'var(--status-serious)' }}
+            aria-hidden="true"
+          />
+          <div className="flex flex-wrap items-center justify-between gap-3 pl-2">
+            <div>
+              <h2 className="section-label" style={{ color: 'var(--status-serious)' }}>
+                Waiting for approval
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-ink-secondary">
+                Auto-fix is turned off. The agent found the cause but won&apos;t apply the fix until
+                you approve.
               </p>
-            )}
+              {approveError && (
+                <p className="mt-1 text-sm" style={{ color: 'var(--status-critical)' }}>
+                  {approveError}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleApprove}
+              disabled={approving}
+              className="shrink-0 rounded-md bg-critical px-3 py-1.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-50"
+            >
+              {approving ? 'Approving…' : 'Approve the fix'}
+            </button>
           </div>
-          <button
-            onClick={handleApprove}
-            disabled={approving}
-            className="shrink-0 rounded-md bg-critical px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-          >
-            {approving ? 'Approving…' : 'Approve remediation'}
-          </button>
         </div>
       )}
 
       {incident.postmortem && (
-        <div className="prose prose-invert prose-sm mt-6 max-w-none rounded-lg border border-border bg-surface p-4">
-          <h2 className="not-prose text-xs uppercase tracking-wide text-ink-muted">Postmortem</h2>
-          <ReactMarkdown>{incident.postmortem}</ReactMarkdown>
+        <div className="prose prose-invert prose-sm panel max-w-none p-4">
+          <h2 className="not-prose section-label">Write-up</h2>
+          <div className="mt-3">
+            <ReactMarkdown>{incident.postmortem}</ReactMarkdown>
+          </div>
         </div>
       )}
     </main>

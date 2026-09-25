@@ -13,12 +13,12 @@ export function getIncidentPhase(incident) {
 }
 
 export const PHASE_LABELS = {
-  diagnosing: 'Diagnosing',
-  remediating: 'Remediating',
-  verifying: 'Verifying',
-  awaiting_approval: 'Awaiting Approval',
-  resolved: 'Resolved',
-  unresolved: 'Unresolved',
+  diagnosing: 'Finding the cause',
+  remediating: 'Fixing',
+  verifying: 'Checking the fix',
+  awaiting_approval: 'Needs approval',
+  resolved: 'Fixed',
+  unresolved: 'Could not fix',
 };
 
 export const PHASE_TONE = {

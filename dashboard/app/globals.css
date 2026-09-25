@@ -4,22 +4,91 @@
 
 :root {
   color-scheme: dark;
-  --surface: #1a1a19;
-  --page: #0d0d0d;
-  --ink-primary: #ffffff;
-  --ink-secondary: #c3c2b7;
-  --ink-muted: #898781;
-  --gridline: #2c2c2a;
-  --border-hairline: rgba(255, 255, 255, 0.1);
-  --accent: #3987e5;
+  --surface: #141414;
+  --surface-raised: #1c1c1c;
+  --page: #000000;
+  --ink-primary: #f5f5f4;
+  --ink-secondary: #a8a29e;
+  --ink-muted: #78716c;
+  --gridline: #262626;
+  --border-hairline: rgba(255, 255, 255, 0.09);
+  --accent: #3b82f6;
 
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #d03b3b;
+  --status-good: #22c55e;
+  --status-warning: #eab308;
+  --status-serious: #f97316;
+  --status-critical: #ef4444;
 }
 
 body {
   background-color: var(--page);
   color: var(--ink-primary);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-lg border border-border bg-surface;
+  }
+
+  .section-label {
+    @apply text-xs font-bold uppercase tracking-wide text-ink-primary;
+  }
+}
+
+@layer utilities {
+  .animate-in {
+    animation: fade-up 0.2s ease-out both;
+    animation-delay: var(--delay, 0ms);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.live-dot {
+  animation: live-pulse 2s ease-out infinite;
+}
+
+.break-it-menu {
+  animation: dropdown-in 0.15s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .live-dot,
+  .break-it-menu {
+    animation: none !important;
+  }
 }

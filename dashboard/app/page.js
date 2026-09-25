@@ -7,7 +7,15 @@ import MetricsSummary from '../components/MetricsSummary';
 import ConfidenceCalibration from '../components/ConfidenceCalibration';
 import BreakItButton from '../components/BreakItButton';
 import IncidentTimeline from '../components/IncidentTimeline';
+import Section from '../components/Section';
 import { getServices, getIncidents, getConfidenceReport } from '../lib/api';
+
+const NAV = [
+  { href: '#health', label: 'Health' },
+  { href: '#metrics', label: 'Speed' },
+  { href: '#confidence', label: 'Accuracy' },
+  { href: '#incidents', label: 'Problems' },
+];
 
 export default function DashboardPage() {
   const [services, setServices] = useState([]);
@@ -56,47 +64,112 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [incidents, refreshIncidents]);
 
+  const activeCount = incidents.filter((i) => !i.resolved_at).length;
+  const healthyCount = services.filter((s) => s.status === 'healthy').length;
+
   return (
-    <main className="mx-auto max-w-6xl px-4 py-10">
-      <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Autonomous SRE Agent</h1>
-          <p className="mt-1 max-w-xl text-sm text-ink-secondary">
-            Three microservices, a control plane that detects, diagnoses, and remediates incidents on its own —
-            no human in the loop. Click &ldquo;Break It&rdquo; to watch it happen live.
-          </p>
-          <Link href="/status" className="mt-2 inline-block text-xs text-accent hover:underline">
-            Public status page →
-          </Link>
+    <>
+      <header className="sticky top-0 z-40 border-b border-border bg-page/90 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-5">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">Autonomous SRE Agent</p>
+              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-muted">
+                <span className="live-dot h-1.5 w-1.5 rounded-full bg-good" aria-hidden="true" />
+                {activeCount > 0
+                  ? `${activeCount} problem${activeCount === 1 ? '' : 's'} open`
+                  : services.length > 0
+                    ? `${healthyCount} of ${services.length} services OK`
+                    : 'Connecting…'}
+              </p>
+            </div>
+            <nav className="hidden items-center gap-1 md:flex" aria-label="Sections">
+              {NAV.map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="rounded-md px-2.5 py-1.5 text-sm text-ink-muted transition hover:bg-white/[0.04] hover:text-ink-primary"
+                >
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Link
+              href="/status"
+              className="hidden rounded-md px-2.5 py-1.5 text-sm text-ink-secondary transition hover:text-accent sm:inline"
+            >
+              Status page
+            </Link>
+            <BreakItButton onTriggered={refreshIncidents} />
+          </div>
         </div>
-        <BreakItButton onTriggered={refreshIncidents} />
       </header>
 
-      {error && (
-        <div className="mb-6 rounded-md border px-4 py-3 text-sm" style={{ borderColor: 'var(--status-critical)', color: 'var(--status-critical)' }}>
-          {error} — is the control plane reachable?
+      <main className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:py-8">
+        <div className="animate-in max-w-2xl" style={{ '--delay': '0ms' }}>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            Watches three services. Finds root causes. Fixes them.
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-ink-secondary">
+            Press <span className="font-medium text-ink-primary">Break It</span> to inject a fault on
+            purpose, then watch detection, diagnosis, and remediation happen below.
+          </p>
         </div>
-      )}
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-xs uppercase tracking-wide text-ink-muted">Service Health</h2>
-        <ServiceHealthGrid services={services} />
-      </section>
+        {error && (
+          <div
+            className="animate-in rounded-lg border px-4 py-3 text-sm"
+            style={{
+              '--delay': '40ms',
+              borderColor: 'var(--status-critical)',
+              color: 'var(--status-critical)',
+              backgroundColor: 'rgba(239,68,68,0.08)',
+            }}
+          >
+            Can&apos;t reach the backend: {error}
+          </div>
+        )}
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-xs uppercase tracking-wide text-ink-muted">Track Record</h2>
-        <MetricsSummary incidents={incidents} />
-      </section>
+        <Section
+          id="health"
+          title="Service health"
+          description="Are the services up? How fast are they responding?"
+          meta={services.length ? `${healthyCount} healthy` : null}
+          delay={60}
+        >
+          <ServiceHealthGrid services={services} />
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-xs uppercase tracking-wide text-ink-muted">Confidence Calibration</h2>
-        <ConfidenceCalibration report={confidenceReport} />
-      </section>
+        <Section
+          id="metrics"
+          title="How fast it works"
+          description="Average time to find the cause and fix the problem."
+          delay={100}
+        >
+          <MetricsSummary incidents={incidents} />
+        </Section>
 
-      <section>
-        <h2 className="mb-3 text-xs uppercase tracking-wide text-ink-muted">Incident Timeline</h2>
-        <IncidentTimeline incidents={incidents} />
-      </section>
-    </main>
+        <Section
+          id="confidence"
+          title="How often fixes work"
+          description="When the agent felt sure, how often did the fix actually succeed?"
+          delay={140}
+        >
+          <ConfidenceCalibration report={confidenceReport} />
+        </Section>
+
+        <Section
+          id="incidents"
+          title="Problems"
+          description="Recent issues. Click any row to see what happened and how it was fixed."
+          meta={incidents.length ? `${incidents.length} recent` : null}
+          delay={180}
+        >
+          <IncidentTimeline incidents={incidents} />
+        </Section>
+      </main>
+    </>
   );
 }
