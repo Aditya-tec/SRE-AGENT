@@ -13,7 +13,13 @@ export default function MetricsSummary({ incidents }) {
   // so there's no reliable "time to detect" to compute. detected_at ->
   // diagnosed_at is genuinely useful — it just isn't MTTD.
   const avgDiagnoseMs = avgMs(incidents, 'detected_at', 'diagnosed_at');
-  const avgMttrMs = avgMs(incidents, 'detected_at', 'resolved_at');
+  // resolved_at is stamped when an incident stops being tracked, not
+  // only on a genuine recovery — an incident that exhausted all 3
+  // remediation attempts closes as "unresolved" with the same
+  // timestamp. Restricting to remediation_success === true keeps this
+  // an honest "time to actually fix it", matching the tile's own hint.
+  const genuinelyResolved = incidents.filter((i) => i.remediation_success === true);
+  const avgMttrMs = avgMs(genuinelyResolved, 'detected_at', 'resolved_at');
   const resolvedCount = incidents.filter((i) => i.resolved_at).length;
   const successCount = incidents.filter((i) => i.remediation_success === true).length;
   const successRate = resolvedCount > 0 ? (successCount / resolvedCount) * 100 : null;

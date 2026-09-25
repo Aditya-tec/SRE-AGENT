@@ -76,11 +76,19 @@ export default function IncidentDetailPage() {
   const diagnoseTime = formatDuration(incident.detected_at, incident.diagnosed_at);
   const mttr = formatDuration(incident.detected_at, incident.resolved_at);
 
+  // resolved_at marks when the incident stopped being tracked, not
+  // necessarily a recovery — the poller stamps it the same way whether
+  // the incident actually resolved or the agent gave up after 3 failed
+  // attempts (see poller.js's resolveIncident). Label it accordingly
+  // instead of always claiming a recovery that may not have happened.
   const steps = [
     { label: 'Noticed', at: incident.detected_at },
     { label: 'Found the cause', at: incident.diagnosed_at },
     { label: 'Applied a fix', at: incident.remediated_at },
-    { label: 'Back to healthy', at: incident.resolved_at },
+    {
+      label: phase === 'unresolved' ? 'Gave up (3 attempts)' : 'Back to healthy',
+      at: incident.resolved_at,
+    },
   ];
 
   const FAULT_LABELS = {

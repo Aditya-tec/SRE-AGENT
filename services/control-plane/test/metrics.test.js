@@ -37,10 +37,16 @@ test('buildMetricsText exposes service health as a Prometheus gauge', async () =
   assert.doesNotMatch(text, /sre_service_last_latency_ms\{service="inventory-service"\}/, 'null latency is omitted, not emitted as 0');
 });
 
-test('buildMetricsText computes MTTR only over resolved incidents', async () => {
+test('buildMetricsText computes MTTR only over genuinely successful incidents', async () => {
   db.listServices = async () => [];
   db.listIncidents = async () => [
-    { detected_at: '2026-09-24T00:00:00Z', resolved_at: '2026-09-24T00:02:00Z', confidence: 'high', is_flapping: false },
+    {
+      detected_at: '2026-09-24T00:00:00Z',
+      resolved_at: '2026-09-24T00:02:00Z',
+      remediation_success: true,
+      confidence: 'high',
+      is_flapping: false,
+    },
     { detected_at: '2026-09-24T00:00:00Z', resolved_at: null, confidence: 'high', is_flapping: false }, // still open
   ];
 
@@ -49,6 +55,34 @@ test('buildMetricsText computes MTTR only over resolved incidents', async () => 
   assert.match(text, /sre_incidents_open 1/);
   assert.match(text, /sre_incident_mttr_seconds 120\.00/);
   assert.match(text, /sre_incidents_total\{confidence="high"\} 2/);
+});
+
+test('buildMetricsText excludes incidents that closed as unresolved from MTTR, even though resolved_at is set', async () => {
+  db.listServices = async () => [];
+  db.listIncidents = async () => [
+    {
+      detected_at: '2026-09-24T00:00:00Z',
+      resolved_at: '2026-09-24T00:02:00Z',
+      remediation_success: true,
+      confidence: 'high',
+      is_flapping: false,
+    },
+    {
+      // Gave up after 3 attempts: resolved_at is still stamped (the
+      // incident stopped being tracked), but this was never a fix.
+      detected_at: '2026-09-24T00:00:00Z',
+      resolved_at: '2026-09-24T01:00:00Z',
+      remediation_success: false,
+      confidence: 'high',
+      is_flapping: false,
+    },
+  ];
+
+  const text = await buildMetricsText();
+
+  // Only the 120s success counts — averaging in the 3600s failure
+  // would silently balloon or distort the reported MTTR.
+  assert.match(text, /sre_incident_mttr_seconds 120\.00/);
 });
 
 test('buildMetricsText counts flapping incidents', async () => {

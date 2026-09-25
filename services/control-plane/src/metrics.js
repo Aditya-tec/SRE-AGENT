@@ -83,7 +83,12 @@ async function buildMetricsText() {
     )
   );
 
-  const resolved = incidents.filter((i) => i.resolved_at && i.detected_at);
+  // resolved_at is stamped when an incident stops being tracked, not
+  // only on a genuine recovery — one that exhausted all remediation
+  // attempts closes as remediation_success: false with the same
+  // timestamp. Restrict to true successes so this is an honest MTTR,
+  // not "time until the agent gave up" blended in with real fixes.
+  const resolved = incidents.filter((i) => i.resolved_at && i.detected_at && i.remediation_success === true);
   if (resolved.length > 0) {
     const totalSeconds = resolved.reduce(
       (sum, i) => sum + (new Date(i.resolved_at).getTime() - new Date(i.detected_at).getTime()) / 1000,
