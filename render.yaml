@@ -7,6 +7,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - services/order-service/**
     envVars:
       - key: REPLICA_ID
         value: a
@@ -25,6 +28,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - services/order-service/**
     envVars:
       - key: REPLICA_ID
         value: b
@@ -43,6 +49,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - services/inventory-service/**
     envVars:
       - key: CHAOS_SECRET
         sync: false
@@ -55,6 +64,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - services/notification-service/**
     envVars:
       - key: CHAOS_SECRET
         sync: false
@@ -67,6 +79,9 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - services/control-plane/**
     envVars:
       - key: ORDER_A_URL
         value: https://order-service-a.onrender.com
