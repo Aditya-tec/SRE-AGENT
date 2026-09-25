@@ -13,7 +13,7 @@ jobs:
         run: |
           set -x
           curl -sf --max-time 60 https://order-service-a.onrender.com/health
-          curl -sf --max-time 60 https://order-service-b.onrender.com/health
-          curl -sf --max-time 60 https://inventory-service.onrender.com/health
-          curl -sf --max-time 60 https://notification-service.onrender.com/health
-          curl -sf --max-time 60 https://control-plane.onrender.com/health
+          curl -sf --max-time 60 https://order-service-b-vi4q.onrender.com/health
+          curl -sf --max-time 60 https://inventory-service-gvzo.onrender.com/health
+          curl -sf --max-time 60 https://notification-service-qu9y.onrender.com/health
+          curl -sf --max-time 60 https://control-plane-bjmf.onrender.com/health

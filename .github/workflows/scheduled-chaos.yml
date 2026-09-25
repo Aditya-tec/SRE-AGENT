@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Trigger a chaos fault via the control plane
         env:
-          CONTROL_PLANE_URL: https://control-plane.onrender.com
+          CONTROL_PLANE_URL: https://control-plane-bjmf.onrender.com
           SERVICE_INPUT: ${{ github.event.inputs.service }}
           FAULT_INPUT: ${{ github.event.inputs.faultType }}
         run: |
