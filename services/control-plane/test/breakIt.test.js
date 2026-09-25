@@ -113,6 +113,64 @@ test('POST /break-it forwards CHAOS_SECRET as a header when configured', async (
   }
 });
 
+test('POST /break-it skips silently when triggerType is autonomous and autonomous chaos is paused', async () => {
+  const db = require('../src/db');
+  const originalGetSetting = db.getSetting;
+  db.getSetting = async () => 'true';
+  try {
+    await withBreakItApp(async (baseUrl, received) => {
+      const res = await fetch(`${baseUrl}/break-it`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service: 'inventory-service', faultType: 'crash', triggerType: 'autonomous' }),
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { skipped: true, reason: 'autonomous chaos is paused' });
+      assert.equal(received.length, 0, 'no chaos should have been injected');
+    });
+  } finally {
+    db.getSetting = originalGetSetting;
+  }
+});
+
+test('POST /break-it still runs an autonomous trigger when not paused', async () => {
+  const db = require('../src/db');
+  const originalGetSetting = db.getSetting;
+  db.getSetting = async () => 'false';
+  try {
+    await withBreakItApp(async (baseUrl, received) => {
+      const res = await fetch(`${baseUrl}/break-it`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service: 'inventory-service', faultType: 'crash', triggerType: 'autonomous' }),
+      });
+      assert.equal(res.status, 202);
+      assert.equal(received.length, 1);
+    });
+  } finally {
+    db.getSetting = originalGetSetting;
+  }
+});
+
+test('POST /break-it always runs a manual trigger, even while autonomous chaos is paused', async () => {
+  const db = require('../src/db');
+  const originalGetSetting = db.getSetting;
+  db.getSetting = async () => 'true';
+  try {
+    await withBreakItApp(async (baseUrl, received) => {
+      const res = await fetch(`${baseUrl}/break-it`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service: 'inventory-service', faultType: 'crash' }),
+      });
+      assert.equal(res.status, 202);
+      assert.equal(received.length, 1);
+    });
+  } finally {
+    db.getSetting = originalGetSetting;
+  }
+});
+
 test('POST /break-it acquires the chaos lock on success, and a second trigger is rejected with 409 while it holds', async () => {
   await withBreakItApp(async (baseUrl, received) => {
     // Same instance breakIt.js uses internally, required after

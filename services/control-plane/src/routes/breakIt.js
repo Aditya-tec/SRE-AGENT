@@ -2,6 +2,7 @@ const express = require('express');
 const { z } = require('zod');
 const { recordPendingTrigger } = require('../triggerContext');
 const chaosLock = require('../chaosLock');
+const autonomyState = require('../autonomyState');
 
 const router = express.Router();
 
@@ -71,6 +72,14 @@ router.post('/break-it', async (req, res) => {
   }
 
   const { service, faultType, triggerType, scenario } = parsed.data;
+
+  // Scheduled/autonomous chaos only — a manual click from the dashboard
+  // always goes through. 200, not an error: the GitHub Actions job uses
+  // `curl -sf` and shouldn't show as a failed run just because chaos is
+  // deliberately paused.
+  if (triggerType === 'autonomous' && (await autonomyState.isPaused())) {
+    return res.status(200).json({ skipped: true, reason: 'autonomous chaos is paused' });
+  }
 
   if (scenario) {
     const steps = SCENARIOS[scenario];

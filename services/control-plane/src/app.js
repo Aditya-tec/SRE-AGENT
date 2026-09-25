@@ -11,6 +11,7 @@ const breakItRoute = require('./routes/breakIt');
 const statusRoute = require('./routes/status');
 const queryRoute = require('./routes/query');
 const metricsRoute = require('./routes/metrics');
+const autonomyRoute = require('./routes/autonomy');
 
 function corsOptions() {
   const origins = process.env.DASHBOARD_ORIGIN
@@ -69,6 +70,17 @@ function createApp() {
     message: { error: 'too many questions — try again in a minute' },
   });
 
+  // Toggling this is low-risk (it only silences the autonomous chaos
+  // trigger, never a destructive action) but still worth capping like
+  // every other public mutating endpoint here.
+  const autonomyLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too many requests — try again in a minute' },
+  });
+
   app.get('/health', (req, res) => {
     res.json({
       status: 'healthy',
@@ -87,6 +99,8 @@ function createApp() {
   app.use('/query', queryLimiter);
   app.use(queryRoute);
   app.use(metricsRoute);
+  app.use('/autonomy', autonomyLimiter);
+  app.use(autonomyRoute);
 
   app.use((err, req, res, next) => {
     logger.error({ err }, 'unhandled error');

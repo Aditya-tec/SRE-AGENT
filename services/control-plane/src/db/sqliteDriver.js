@@ -57,6 +57,11 @@ db.exec(`
     status TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_metrics_service_time ON metrics_snapshots(service_name, recorded_at DESC);
   CREATE INDEX IF NOT EXISTS idx_incidents_detected ON incidents(detected_at DESC);
 `);
@@ -212,6 +217,18 @@ async function getIncident(id) {
   return fromIncidentRow(row);
 }
 
+async function getSetting(key) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+async function setSetting(key, value) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
+    key,
+    value
+  );
+}
+
 module.exports = {
   upsertService,
   listServices,
@@ -224,4 +241,6 @@ module.exports = {
   listIncidents,
   getIncident,
   countRecentIncidents,
+  getSetting,
+  setSetting,
 };

@@ -48,3 +48,15 @@ export function getConfidenceReport() {
 export function getStatus() {
   return apiFetch('/status');
 }
+
+export function getAutonomy() {
+  return apiFetch('/autonomy');
+}
+
+export function setAutonomyPaused(paused) {
+  return apiFetch('/autonomy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paused }),
+  });
+}

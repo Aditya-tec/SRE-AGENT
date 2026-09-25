@@ -6,6 +6,7 @@ import ServiceHealthGrid from '../components/ServiceHealthGrid';
 import MetricsSummary from '../components/MetricsSummary';
 import ConfidenceCalibration from '../components/ConfidenceCalibration';
 import BreakItButton from '../components/BreakItButton';
+import AutonomyToggle from '../components/AutonomyToggle';
 import IncidentTimeline from '../components/IncidentTimeline';
 import Section from '../components/Section';
 import { getServices, getIncidents, getConfidenceReport } from '../lib/api';
@@ -102,6 +103,7 @@ export default function DashboardPage() {
             >
               Status page
             </Link>
+            <AutonomyToggle />
             <BreakItButton onTriggered={refreshIncidents} />
           </div>
         </div>

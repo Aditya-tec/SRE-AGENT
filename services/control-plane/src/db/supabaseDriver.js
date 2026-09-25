@@ -90,6 +90,17 @@ async function countRecentIncidents(serviceName, sinceIso) {
   return count || 0;
 }
 
+async function getSetting(key) {
+  const { data, error } = await supabase.from('settings').select('value').eq('key', key).maybeSingle();
+  if (error) throw error;
+  return data ? data.value : null;
+}
+
+async function setSetting(key, value) {
+  const { error } = await supabase.from('settings').upsert({ key, value }, { onConflict: 'key' });
+  if (error) throw error;
+}
+
 module.exports = {
   upsertService,
   listServices,
@@ -102,4 +113,6 @@ module.exports = {
   listIncidents,
   getIncident,
   countRecentIncidents,
+  getSetting,
+  setSetting,
 };

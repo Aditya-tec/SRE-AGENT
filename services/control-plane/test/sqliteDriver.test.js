@@ -231,3 +231,17 @@ test('deleteOldSnapshots removes only rows older than 24h', async () => {
   assert.equal(after.length, 1, 'only the 25h-old row should have been pruned');
   assert.equal(after[0].recorded_at, recent);
 });
+
+test('getSetting returns null for a key that has never been set', async () => {
+  const db = freshDriver();
+  assert.equal(await db.getSetting('autonomous_chaos_paused'), null);
+});
+
+test('setSetting then getSetting round-trips, and a second setSetting overwrites rather than duplicating', async () => {
+  const db = freshDriver();
+  await db.setSetting('autonomous_chaos_paused', 'true');
+  assert.equal(await db.getSetting('autonomous_chaos_paused'), 'true');
+
+  await db.setSetting('autonomous_chaos_paused', 'false');
+  assert.equal(await db.getSetting('autonomous_chaos_paused'), 'false');
+});

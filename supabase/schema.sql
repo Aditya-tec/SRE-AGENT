@@ -35,5 +35,10 @@ create table metrics_snapshots (
   status text
 );
 
+create table settings (
+  key text primary key,
+  value text
+);
+
 create index idx_metrics_service_time on metrics_snapshots(service_name, recorded_at desc);
 create index idx_incidents_detected on incidents(detected_at desc);
