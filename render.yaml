@@ -14,9 +14,9 @@ services:
       - key: REPLICA_ID
         value: a
       - key: INVENTORY_URL
-        value: https://inventory-service.onrender.com
+        value: https://inventory-service-gvzo.onrender.com
       - key: NOTIFICATION_URL
-        value: https://notification-service.onrender.com
+        value: https://notification-service-qu9y.onrender.com
       - key: CHAOS_SECRET
         sync: false
 
@@ -35,9 +35,9 @@ services:
       - key: REPLICA_ID
         value: b
       - key: INVENTORY_URL
-        value: https://inventory-service.onrender.com
+        value: https://inventory-service-gvzo.onrender.com
       - key: NOTIFICATION_URL
-        value: https://notification-service.onrender.com
+        value: https://notification-service-qu9y.onrender.com
       - key: CHAOS_SECRET
         sync: false
 
@@ -86,11 +86,11 @@ services:
       - key: ORDER_A_URL
         value: https://order-service-a.onrender.com
       - key: ORDER_B_URL
-        value: https://order-service-b.onrender.com
+        value: https://order-service-b-vi4q.onrender.com
       - key: INVENTORY_URL
-        value: https://inventory-service.onrender.com
+        value: https://inventory-service-gvzo.onrender.com
       - key: NOTIFICATION_URL
-        value: https://notification-service.onrender.com
+        value: https://notification-service-qu9y.onrender.com
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
