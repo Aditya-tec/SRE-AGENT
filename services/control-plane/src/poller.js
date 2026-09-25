@@ -12,6 +12,21 @@ const POLL_INTERVAL_MS = 5000;
 const FETCH_TIMEOUT_MS = 3000;
 const VERIFY_HEALTHY_CYCLES = 2;
 
+// A restart takes real, external time to complete (Render's own
+// container cycle is typically ~10-30s) that the poller has no direct
+// visibility into. Without this, a still-unhealthy service gets a
+// second restart triggered before the first one has even finished —
+// interrupting it and creating a self-sustaining restart storm that
+// never lets the service stay up long enough to be seen healthy again.
+// Scoped to "restart" specifically: traffic_shift/rate_limit are
+// synchronous in-memory changes with no real-world completion delay to
+// wait out. Configurable so tests (which call pollAll() back to back
+// with no real time passing) can set it to 0 — `Number(x) || 40000`
+// would silently ignore an explicit "0" (0 is falsy), so this checks
+// for NaN instead.
+const parsedRestartCooldownMs = Number(process.env.RESTART_COOLDOWN_MS);
+const RESTART_COOLDOWN_MS = Number.isNaN(parsedRestartCooldownMs) ? 40000 : parsedRestartCooldownMs;
+
 // A service that opens FLAPPING_THRESHOLD_COUNT+ incidents within
 // FLAPPING_WINDOW_MS is tagged is_flapping — distinct from a clean
 // one-off, since repeated open/resolve cycles usually mean the
@@ -206,6 +221,9 @@ async function attemptRemediation(serviceName, incident, action) {
 
   tracked.attempts += 1;
   tracked.lastAction = action;
+  if (action === 'restart') {
+    tracked.remediationCooldownUntil = Date.now() + RESTART_COOLDOWN_MS;
+  }
 
   logger.info(
     { incidentId: tracked.incidentId, attempt: tracked.attempts, maxAttempts: MAX_ATTEMPTS, action, confidence: tracked.confidence || 'n/a' },
@@ -235,6 +253,14 @@ async function progressIncident(serviceName, evaluation) {
   }
 
   tracked.consecutiveHealthy = 0;
+
+  // Still cooling down from the last restart — give it the time it
+  // needs to actually come back up before judging it again (escalating
+  // or giving up), rather than treating "still down 5-10s after asking
+  // Render to restart it" as proof the restart failed.
+  if (tracked.remediationCooldownUntil && Date.now() < tracked.remediationCooldownUntil) {
+    return;
+  }
 
   if (tracked.awaitingApproval) {
     // Paused for a human decision — don't escalate or burn attempts

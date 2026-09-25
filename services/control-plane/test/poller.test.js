@@ -2,6 +2,10 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost:9999';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'dummy-test-key';
 delete process.env.RENDER_API_KEY;
 delete process.env.GROQ_API_KEY;
+// Tests call pollAll() back to back with no real time passing between
+// calls — the real ~40s post-restart cooldown would otherwise stall
+// every multi-attempt test forever.
+process.env.RESTART_COOLDOWN_MS = '0';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -141,6 +145,88 @@ test('a permanently unreachable service reaches Unresolved after exactly 3 remed
     assert.ok(incident.postmortem, 'a postmortem should be generated even for an unresolved incident');
   } finally {
     down.close();
+    healthyStub.close();
+  }
+});
+
+test('a restart does not escalate to another attempt while still within RESTART_COOLDOWN_MS', async () => {
+  // Effectively "never" within this test's real runtime — proves the
+  // incident gets stuck exactly where it should (attempt 2, still
+  // Verifying) rather than racing ahead to attempt 3 / Unresolved the
+  // way the other tests in this file do with the cooldown at 0.
+  process.env.RESTART_COOLDOWN_MS = '999999999';
+  const incidents = installFakeDb();
+  const down = await startHealthServer({ healthy: () => false });
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${down.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${healthyStub.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+
+    // Debounce -> diagnose (low confidence, no GROQ_API_KEY) -> monitor
+    // (attempt 1) -> still down next cycle -> escalate to restart
+    // (attempt 2, which sets the cooldown). A few more cycles would
+    // normally reach attempt 3 / Unresolved (see the sibling test with
+    // RESTART_COOLDOWN_MS=0) — here they must not.
+    let incident;
+    for (let cycle = 0; cycle < 10; cycle++) {
+      await poller.pollAll();
+      incident = [...incidents.values()].find((i) => i.service_name === 'order-service-a');
+    }
+
+    assert.ok(incident, 'incident should have opened');
+    assert.equal(incident.remediation_action, 'restart', 'should have escalated from monitor to restart once');
+    assert.equal(incident.resolved_at, undefined, 'must not give up while still cooling down from that restart');
+  } finally {
+    process.env.RESTART_COOLDOWN_MS = '0';
+    down.close();
+    healthyStub.close();
+  }
+});
+
+test('a genuine recovery still resolves the incident even while the post-restart cooldown is active', async () => {
+  process.env.RESTART_COOLDOWN_MS = '999999999';
+  const incidents = installFakeDb();
+  let isHealthy = false;
+  const flaky = await startHealthServer({ healthy: () => isHealthy });
+  const healthyStub = await startHealthServer({ healthy: () => true });
+
+  try {
+    const poller = await freshPoller({
+      orderA: `http://localhost:${flaky.address().port}`,
+      orderB: `http://localhost:${healthyStub.address().port}`,
+      inventory: `http://localhost:${healthyStub.address().port}`,
+      notification: `http://localhost:${healthyStub.address().port}`,
+    });
+
+    let incident;
+    for (let cycle = 0; cycle < 5 && incident?.remediation_action !== 'restart'; cycle++) {
+      await poller.pollAll();
+      incident = [...incidents.values()].find((i) => i.service_name === 'order-service-a');
+    }
+    assert.equal(incident?.remediation_action, 'restart', 'should have escalated to restart, starting the cooldown');
+
+    // Recovers immediately after — still well within the (effectively
+    // infinite) cooldown window. The cooldown only gates re-escalating
+    // a still-unhealthy service; it must never delay noticing a real
+    // recovery.
+    isHealthy = true;
+    let resolved;
+    for (let cycle = 0; cycle < 5 && !resolved; cycle++) {
+      await poller.pollAll();
+      const current = incidents.get(incident.id);
+      if (current.resolved_at) resolved = current;
+    }
+
+    assert.ok(resolved, 'a genuine recovery must still resolve the incident during the cooldown');
+    assert.equal(resolved.remediation_success, true);
+  } finally {
+    process.env.RESTART_COOLDOWN_MS = '0';
+    flaky.close();
     healthyStub.close();
   }
 });
