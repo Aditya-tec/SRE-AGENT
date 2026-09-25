@@ -49,7 +49,7 @@ function sleep(ms) {
 }
 
 async function injectChaos(service, faultType) {
-  await fetch(`${SERVICE_URLS[service]}/chaos`, {
+  const res = await fetch(`${SERVICE_URLS[service]}/chaos`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -57,6 +57,16 @@ async function injectChaos(service, faultType) {
     },
     body: JSON.stringify({ type: faultType, durationSec: DEFAULT_DURATION_SEC }),
   });
+
+  // fetch() only rejects on a network failure — a 401 (CHAOS_SECRET
+  // mismatch between this service and the target) or any other HTTP
+  // error status resolves normally and was previously swallowed here,
+  // so /break-it reported success (202) and the dashboard showed
+  // "Broken on purpose" even though no fault was ever actually applied.
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${service} /chaos returned ${res.status}${body ? `: ${body}` : ''}`);
+  }
 }
 
 // All chaos flows through here (dashboard button and the scheduled

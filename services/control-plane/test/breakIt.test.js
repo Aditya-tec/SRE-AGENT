@@ -66,6 +66,61 @@ async function withBreakItApp(run) {
   }
 }
 
+function startMockChaosServerWithStatus(status) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+      });
+    });
+    server.listen(0, () => resolve(server));
+    server.unref();
+  });
+}
+
+test('POST /break-it reports failure, not success, when the target rejects the chaos call (e.g. CHAOS_SECRET mismatch)', async () => {
+  const unauthorizedServer = await startMockChaosServerWithStatus(401);
+  const { port } = unauthorizedServer.address();
+
+  process.env.INVENTORY_URL = `http://localhost:${port}`;
+  process.env.ORDER_A_URL = 'http://localhost:1';
+  process.env.ORDER_B_URL = 'http://localhost:1';
+  process.env.NOTIFICATION_URL = 'http://localhost:1';
+
+  for (const mod of ['../src/routes/breakIt', '../src/triggerContext', '../src/chaosLock']) {
+    delete require.cache[require.resolve(mod)];
+  }
+  const breakItRoute = require('../src/routes/breakIt');
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use(breakItRoute);
+  const appServer = app.listen(0);
+  appServer.unref();
+  const baseUrl = `http://localhost:${appServer.address().port}`;
+
+  try {
+    const res = await fetch(`${baseUrl}/break-it`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service: 'inventory-service', faultType: 'crash' }),
+    });
+    // Previously this returned 202 (success) even though the target
+    // never actually applied the fault — injectChaos() ignored the
+    // response status entirely.
+    assert.equal(res.status, 502);
+    const body = await res.json();
+    assert.match(body.error, /401/);
+  } finally {
+    appServer.closeAllConnections();
+    unauthorizedServer.closeAllConnections();
+    appServer.close();
+    unauthorizedServer.close();
+  }
+});
+
 test('POST /break-it rejects an unknown service', async () => {
   await withBreakItApp(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/break-it`, {
