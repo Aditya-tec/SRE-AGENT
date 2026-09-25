@@ -1,6 +1,7 @@
 const Groq = require('groq-sdk');
 const db = require('./db');
 const logger = require('./logger');
+const { describeGroqError } = require('./groqError');
 
 // llama-3.3-70b-versatile was retired from Groq's catalog (confirmed via
 // GET /openai/v1/models against a live key — it 404s, silently forcing
@@ -40,7 +41,6 @@ const CALL_CHAIN = {
 };
 
 const FALLBACK_DIAGNOSIS = {
-  rootCause: 'Diagnosis unavailable — LLM call failed',
   confidence: 'low',
   recommendedAction: 'restart',
 };
@@ -75,7 +75,11 @@ async function diagnose(incident) {
 
   if (!groq) {
     logger.warn('GROQ_API_KEY not set, using fallback diagnosis');
-    return { ...FALLBACK_DIAGNOSIS, context };
+    return {
+      ...FALLBACK_DIAGNOSIS,
+      rootCause: 'Diagnosis unavailable — GROQ_API_KEY not configured',
+      context,
+    };
   }
 
   try {
@@ -101,7 +105,11 @@ async function diagnose(incident) {
     return { ...parsed, context };
   } catch (err) {
     logger.error({ err }, 'Groq call failed, falling back');
-    return { ...FALLBACK_DIAGNOSIS, context };
+    return {
+      ...FALLBACK_DIAGNOSIS,
+      rootCause: `Diagnosis unavailable — ${describeGroqError(err)}`,
+      context,
+    };
   }
 }
 

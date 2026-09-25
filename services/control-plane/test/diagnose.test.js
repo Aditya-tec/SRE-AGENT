@@ -6,6 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { diagnose, buildContext } = require('../src/diagnose');
+const { describeGroqError } = require('../src/groqError');
 
 test('buildContext pulls the affected service plus its call-chain neighbors', async () => {
   const seen = [];
@@ -32,8 +33,19 @@ test('diagnose falls back to a safe default when GROQ_API_KEY is unset', async (
 
   const result = await diagnose({ service_name: 'inventory-service', fault_type: 'error_rate' });
 
-  assert.equal(result.rootCause, 'Diagnosis unavailable — LLM call failed');
+  assert.equal(result.rootCause, 'Diagnosis unavailable — GROQ_API_KEY not configured');
   assert.equal(result.confidence, 'low');
   assert.equal(result.recommendedAction, 'restart');
   assert.ok(result.context, 'fallback still carries the context that was built, for storage in raw_context');
+});
+
+test('describeGroqError distinguishes rate limit, auth, and timeout failures', () => {
+  assert.equal(describeGroqError({ status: 429 }), 'Groq rate limit or quota exceeded');
+  assert.equal(describeGroqError({ status: 401 }), 'Groq API key invalid or missing');
+  assert.equal(
+    describeGroqError({ message: 'Groq call timed out' }),
+    'Groq call timed out'
+  );
+  assert.equal(describeGroqError({ status: 500 }), 'LLM call failed');
+  assert.equal(describeGroqError(new Error('anything else')), 'LLM call failed');
 });

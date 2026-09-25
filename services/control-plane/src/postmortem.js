@@ -1,5 +1,6 @@
 const Groq = require('groq-sdk');
 const logger = require('./logger');
+const { describeGroqError } = require('./groqError');
 
 // See diagnose.js for why this isn't llama-3.3-70b-versatile anymore —
 // that model was retired from Groq's catalog and 404s on every call.
@@ -19,7 +20,7 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-function fallbackPostmortem(incident) {
+function fallbackPostmortem(incident, reason) {
   return `## Summary
 ${incident.service_name} experienced a ${incident.fault_type} incident (${incident.trigger_type} trigger).
 
@@ -36,13 +37,13 @@ ${incident.root_cause || 'Unknown (diagnosis unavailable)'}
 Action taken: ${incident.remediation_action || 'none'} (${incident.remediation_success ? 'succeeded' : 'did not fully succeed'}).
 
 ## Follow-up
-Postmortem generation via LLM was unavailable; this is an auto-templated summary.`;
+Postmortem generation via LLM was unavailable (${reason}); this is an auto-templated summary.`;
 }
 
 async function generatePostmortem(incident) {
   if (!groq) {
     logger.warn('GROQ_API_KEY not set, using templated fallback');
-    return fallbackPostmortem(incident);
+    return fallbackPostmortem(incident, 'GROQ_API_KEY not configured');
   }
 
   try {
@@ -76,7 +77,7 @@ async function generatePostmortem(incident) {
     return text;
   } catch (err) {
     logger.error({ err }, 'Groq call failed, using templated fallback');
-    return fallbackPostmortem(incident);
+    return fallbackPostmortem(incident, describeGroqError(err));
   }
 }
 
