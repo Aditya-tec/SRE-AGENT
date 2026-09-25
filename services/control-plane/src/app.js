@@ -45,12 +45,16 @@ function createApp() {
   // this limit exists to stop a public, untrusted visitor from
   // spamming the deployed demo, which doesn't apply to a single local
   // operator). Unset, behavior is identical to before this existed.
+  const breakItWindowMs = Number(process.env.BREAK_IT_RATE_LIMIT_WINDOW_MS) || 5 * 60 * 1000;
+  const breakItMax = Number(process.env.BREAK_IT_RATE_LIMIT_MAX) || 1;
   const breakItLimiter = rateLimit({
-    windowMs: Number(process.env.BREAK_IT_RATE_LIMIT_WINDOW_MS) || 5 * 60 * 1000,
-    limit: Number(process.env.BREAK_IT_RATE_LIMIT_MAX) || 1,
+    windowMs: breakItWindowMs,
+    limit: breakItMax,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'you can trigger one incident every 5 minutes — try again shortly' },
+    message: {
+      error: `you can trigger up to ${breakItMax} incident${breakItMax === 1 ? '' : 's'} every ${breakItWindowMs / 60000} minutes — try again shortly`,
+    },
   });
 
   // /query is another public, unauthenticated Groq call — same abuse
