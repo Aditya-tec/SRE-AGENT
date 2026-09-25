@@ -115,23 +115,24 @@ paths:
           $ref: '#/components/responses/Error'
   /autonomy:
     get:
-      summary: Whether the scheduled/autonomous chaos trigger is currently paused
+      summary: Whether every /break-it trigger (manual and autonomous) is currently paused
       responses:
         '200':
-          description: Current autonomy state
+          description: Current chaos-paused state
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  autonomousChaosPaused:
+                  chaosPaused:
                     type: boolean
         '500':
           $ref: '#/components/responses/Error'
     post:
       summary: >-
-        Pause or resume the scheduled/autonomous chaos trigger. A manual
-        Break It call always runs regardless of this setting.
+        Pause or resume every /break-it trigger. Blocks manual and
+        autonomous alike, since /break-it is public and unauthenticated
+        and there is no way to tell them apart server-side.
       requestBody:
         required: true
         content:
@@ -144,13 +145,13 @@ paths:
                   type: boolean
       responses:
         '200':
-          description: Updated autonomy state
+          description: Updated chaos-paused state
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  autonomousChaosPaused:
+                  chaosPaused:
                     type: boolean
         '400':
           $ref: '#/components/responses/Error'

@@ -73,12 +73,16 @@ router.post('/break-it', async (req, res) => {
 
   const { service, faultType, triggerType, scenario } = parsed.data;
 
-  // Scheduled/autonomous chaos only — a manual click from the dashboard
-  // always goes through. 200, not an error: the GitHub Actions job uses
-  // `curl -sf` and shouldn't show as a failed run just because chaos is
-  // deliberately paused.
-  if (triggerType === 'autonomous' && (await autonomyState.isPaused())) {
-    return res.status(200).json({ skipped: true, reason: 'autonomous chaos is paused' });
+  // Blocks every trigger — manual or autonomous — not just the
+  // scheduled job. /break-it is public and unauthenticated by design
+  // (see README's "No authentication, by design"), which means there
+  // is no way to tell "the operator testing manually" apart from
+  // "someone hammering the public API directly" — this exists as a
+  // blunt emergency stop for exactly that second case. 200, not an
+  // error: the GitHub Actions job uses `curl -sf` and shouldn't show as
+  // a failed run just because chaos is deliberately paused.
+  if (await autonomyState.isPaused()) {
+    return res.status(200).json({ skipped: true, reason: 'chaos is paused' });
   }
 
   if (scenario) {

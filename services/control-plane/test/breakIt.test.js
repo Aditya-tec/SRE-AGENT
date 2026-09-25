@@ -5,6 +5,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
+// /break-it now checks the chaos-paused flag on every call — default
+// every test in this file to "not paused" against the real (dummy,
+// unreachable) Supabase driver, so only the tests that actually
+// exercise the pause behavior need their own db.getSetting override.
+const db = require('../src/db');
+db.getSetting = async () => 'false';
+
 function startMockChaosServer() {
   const received = [];
   return new Promise((resolve) => {
@@ -113,7 +120,7 @@ test('POST /break-it forwards CHAOS_SECRET as a header when configured', async (
   }
 });
 
-test('POST /break-it skips silently when triggerType is autonomous and autonomous chaos is paused', async () => {
+test('POST /break-it skips silently for an autonomous trigger while chaos is paused', async () => {
   const db = require('../src/db');
   const originalGetSetting = db.getSetting;
   db.getSetting = async () => 'true';
@@ -125,7 +132,7 @@ test('POST /break-it skips silently when triggerType is autonomous and autonomou
         body: JSON.stringify({ service: 'inventory-service', faultType: 'crash', triggerType: 'autonomous' }),
       });
       assert.equal(res.status, 200);
-      assert.deepEqual(await res.json(), { skipped: true, reason: 'autonomous chaos is paused' });
+      assert.deepEqual(await res.json(), { skipped: true, reason: 'chaos is paused' });
       assert.equal(received.length, 0, 'no chaos should have been injected');
     });
   } finally {
@@ -152,10 +159,30 @@ test('POST /break-it still runs an autonomous trigger when not paused', async ()
   }
 });
 
-test('POST /break-it always runs a manual trigger, even while autonomous chaos is paused', async () => {
+test('POST /break-it also skips a manual trigger while chaos is paused — /break-it is public and unauthenticated, so manual and autonomous can\'t be told apart', async () => {
   const db = require('../src/db');
   const originalGetSetting = db.getSetting;
   db.getSetting = async () => 'true';
+  try {
+    await withBreakItApp(async (baseUrl, received) => {
+      const res = await fetch(`${baseUrl}/break-it`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service: 'inventory-service', faultType: 'crash' }),
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { skipped: true, reason: 'chaos is paused' });
+      assert.equal(received.length, 0, 'no chaos should have been injected');
+    });
+  } finally {
+    db.getSetting = originalGetSetting;
+  }
+});
+
+test('POST /break-it runs a manual trigger normally when not paused', async () => {
+  const db = require('../src/db');
+  const originalGetSetting = db.getSetting;
+  db.getSetting = async () => 'false';
   try {
     await withBreakItApp(async (baseUrl, received) => {
       const res = await fetch(`${baseUrl}/break-it`, {

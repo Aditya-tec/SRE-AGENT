@@ -72,13 +72,20 @@ export default function BreakItButton({ onTriggered }) {
     setOpen(false);
     setLoading(true);
     try {
-      if (option.scenario) {
-        await breakItScenario(option.scenario);
+      const result = option.scenario
+        ? await breakItScenario(option.scenario)
+        : await breakIt(option.service, option.faultType);
+
+      // Chaos can be globally paused (see the header toggle) — the API
+      // still returns 200 for this (so a scheduled job's health check
+      // doesn't read it as a failure), so a real skip has to be told
+      // apart from a real trigger by the response body, not the status.
+      if (result?.skipped) {
+        setStatus({ type: 'error', text: 'Nothing happened — chaos is currently paused (see the header toggle).' });
       } else {
-        await breakIt(option.service, option.faultType);
+        setStatus({ type: 'success', text: 'Broken on purpose — watch Health and Problems below.' });
+        onTriggered?.();
       }
-      setStatus({ type: 'success', text: 'Broken on purpose — watch Health and Problems below.' });
-      onTriggered?.();
     } catch (err) {
       setStatus({ type: 'error', text: err.message });
     } finally {

@@ -28,7 +28,7 @@ test('GET /autonomy defaults to not paused', async () => {
   await withAutonomyApp(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/autonomy`);
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { autonomousChaosPaused: false });
+    assert.deepEqual(await res.json(), { chaosPaused: false });
   });
 });
 
@@ -44,10 +44,10 @@ test('POST /autonomy sets and persists the pause flag, reflected by a subsequent
       body: JSON.stringify({ paused: true }),
     });
     assert.equal(postRes.status, 200);
-    assert.deepEqual(await postRes.json(), { autonomousChaosPaused: true });
+    assert.deepEqual(await postRes.json(), { chaosPaused: true });
 
     const getRes = await fetch(`${baseUrl}/autonomy`);
-    assert.deepEqual(await getRes.json(), { autonomousChaosPaused: true });
+    assert.deepEqual(await getRes.json(), { chaosPaused: true });
   });
 });
 

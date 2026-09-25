@@ -3,10 +3,12 @@
 import { useEffect, useState } from 'react';
 import { getAutonomy, setAutonomyPaused } from '../lib/api';
 
-// Pauses only the scheduled/autonomous chaos trigger — manual "Break
-// It" clicks always still work. Exists so a known-bad state (e.g. Groq
-// quota exhausted) doesn't keep piling up unresolved incidents every
-// ~2h while someone fixes the underlying cause.
+// Blocks every /break-it trigger, manual or autonomous. /break-it is
+// public and unauthenticated by design, so there's no way to tell a
+// legitimate manual test apart from an outside script hitting the API
+// directly — this is a blunt emergency stop for that case (or for a
+// known-bad state, e.g. exhausted Groq quota, piling up incidents
+// unattended), not something to leave on during normal operation.
 export default function AutonomyToggle() {
   const [paused, setPaused] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -15,7 +17,7 @@ export default function AutonomyToggle() {
     let cancelled = false;
     getAutonomy()
       .then((res) => {
-        if (!cancelled) setPaused(res.autonomousChaosPaused);
+        if (!cancelled) setPaused(res.chaosPaused);
       })
       .catch(() => {});
     return () => {
@@ -28,7 +30,7 @@ export default function AutonomyToggle() {
     setLoading(true);
     try {
       const res = await setAutonomyPaused(!paused);
-      setPaused(res.autonomousChaosPaused);
+      setPaused(res.chaosPaused);
     } catch {
       // leave the last-known state in place
     } finally {
@@ -45,8 +47,8 @@ export default function AutonomyToggle() {
       disabled={loading}
       title={
         paused
-          ? 'Scheduled chaos is paused — manual Break It still works'
-          : 'Pause the scheduled autonomous chaos trigger'
+          ? 'All chaos triggers (manual and scheduled) are paused'
+          : 'Emergency stop — pause every Break It trigger, manual and scheduled'
       }
       className="hidden items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm text-ink-secondary transition hover:text-accent disabled:opacity-50 sm:inline-flex"
     >
@@ -54,7 +56,7 @@ export default function AutonomyToggle() {
         className={`h-1.5 w-1.5 rounded-full ${paused ? 'bg-ink-muted' : 'bg-good'}`}
         aria-hidden="true"
       />
-      {paused ? 'Autonomous chaos paused' : 'Autonomous chaos on'}
+      {paused ? 'Chaos paused' : 'Chaos on'}
     </button>
   );
 }
