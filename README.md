@@ -8,6 +8,10 @@ A self-healing distributed system: three microservices simulating an e-commerce 
 
 > First load may take up to ~50s — the backend runs on a free tier that sleeps after ~15 min idle. Rare in practice (a keep-alive job pings it every 10 min), not a sign anything's broken.
 
+![Dashboard overview — service health, MTTD/MTTR/success-rate, incident timeline](docs/screenshots/dashboard-main.png)
+
+![Incident detail view — timeline, root cause, auto-generated postmortem](docs/screenshots/dashboard-incident.png)
+
 ## Why this exists
 
 Most portfolio projects show "I can build a feature." This one shows what it looks like to automate the response a senior SRE gives when production breaks: detect the anomaly, reason about the likely root cause from telemetry (using an LLM for real diagnostic reasoning, not chat), take a whitelisted remediation action, verify it worked, and write the postmortem — with zero human intervention, but full visibility into every step.
@@ -110,10 +114,6 @@ npm run dev:all
 ```
 
 Boots all 4 backend services + control plane + dashboard together. `npm run seed:demo` populates realistic incident history through the real `/break-it` path. See `npm run gameday`, `npm run load-test`, and `scripts/sre-cli.js` for additional tooling, and [`services/control-plane/openapi.yaml`](services/control-plane/openapi.yaml) for the full API surface (including `/query`, the natural-language status endpoint, and `/metrics`, the Prometheus export).
-
-![Dashboard overview — service health, MTTD/MTTR/success-rate, incident timeline](docs/screenshots/dashboard-main.png)
-
-![Incident detail view — timeline, root cause, auto-generated postmortem](docs/screenshots/dashboard-incident.png)
 
 ## Deploying your own copy
 
