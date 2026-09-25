@@ -12,10 +12,6 @@ A self-healing distributed system: three microservices simulating an e-commerce 
 
 ![Incident detail view — timeline, root cause, auto-generated postmortem](docs/screenshots/dashboard-incident.png)
 
-## Why this exists
-
-Most portfolio projects show "I can build a feature." This one shows what it looks like to automate the response a senior SRE gives when production breaks: detect the anomaly, reason about the likely root cause from telemetry (using an LLM for real diagnostic reasoning, not chat), take a whitelisted remediation action, verify it worked, and write the postmortem — with zero human intervention, but full visibility into every step.
-
 ## Architecture
 
 ```mermaid
@@ -94,14 +90,6 @@ Everything else follows from that:
 ## Testing & CI
 
 130+ automated tests across all services (Node's built-in `node:test`), covering pure logic (metrics, fault application, anomaly detection), route-level integration tests against real running servers, and the full incident state machine end to end against a stubbed database — including the case where remediation genuinely fails 3 times and the case where it recovers cleanly. CI runs the full suite, a production build, a client-bundle secret-leakage check, and `npm audit` on every push.
-
-## What's next
-
-1. **Organic-vs-injected load distinction** — have traffic occasionally burst with no fault injected, and check whether diagnosis correctly says "this looks like real load, not an incident" instead of false-alarming. The most defensible AI claim available here, since it requires reasoning about the *absence* of a fault.
-2. **Historical trend charts** on the dashboard — MTTR over time, not just a running average.
-3. **A shareable, read-only postmortem link** for one incident, without the whole dashboard.
-4. **Component-level dashboard tests** (the current suite covers logic and visual checks, not React component behavior directly).
-5. Real chaos at the infrastructure level (killing a container, not just an in-process flag).
 
 ## Local development
 
