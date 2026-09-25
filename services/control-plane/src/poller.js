@@ -9,7 +9,16 @@ const { consumePendingTrigger } = require('./triggerContext');
 const chaosLock = require('./chaosLock');
 
 const POLL_INTERVAL_MS = 5000;
-const FETCH_TIMEOUT_MS = 3000;
+// Render's own free-tier banner warns a service "can be delayed by 50
+// seconds or more" under load or while waking up — 3s was far too
+// tight for that, meaning a genuinely-alive service that was merely
+// slow for a moment (real CPU throttling from shared free-tier compute
+// under heavy load) could get misclassified as "unreachable" and start
+// the whole detect -> diagnose -> remediate cycle over a false
+// positive. 8s absorbs realistic transient slowness while still being
+// far short of a full cold-start, so an actually-dead service is still
+// correctly flagged, just without such a hair trigger.
+const FETCH_TIMEOUT_MS = 8000;
 const VERIFY_HEALTHY_CYCLES = 2;
 
 // A restart takes real, external time to complete (Render's own
