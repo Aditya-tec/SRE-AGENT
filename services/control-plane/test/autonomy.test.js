@@ -61,3 +61,52 @@ test('POST /autonomy rejects a non-boolean paused field', async () => {
     assert.equal(res.status, 400);
   });
 });
+
+test('POST /autonomy rejects requests without the correct ADMIN_SECRET, once one is configured', async () => {
+  process.env.ADMIN_SECRET = 'super-secret';
+  for (const mod of ['../src/routes/autonomy']) {
+    delete require.cache[require.resolve(mod)];
+  }
+  const freshAutonomyRoute = require('../src/routes/autonomy');
+  const app = express();
+  app.use(express.json());
+  app.use(freshAutonomyRoute);
+  const server = app.listen(0);
+  server.unref();
+  const baseUrl = `http://localhost:${server.address().port}`;
+
+  try {
+    const noHeader = await fetch(`${baseUrl}/autonomy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused: true }),
+    });
+    assert.equal(noHeader.status, 401);
+
+    const wrongSecret = await fetch(`${baseUrl}/autonomy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'not-it' },
+      body: JSON.stringify({ paused: true }),
+    });
+    assert.equal(wrongSecret.status, 401);
+
+    const stored = new Map();
+    db.getSetting = async (key) => stored.get(key) ?? null;
+    db.setSetting = async (key, value) => stored.set(key, value);
+
+    const correctSecret = await fetch(`${baseUrl}/autonomy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'super-secret' },
+      body: JSON.stringify({ paused: true }),
+    });
+    assert.equal(correctSecret.status, 200);
+
+    // GET is unauthenticated regardless — no risk in reading the state.
+    const getRes = await fetch(`${baseUrl}/autonomy`);
+    assert.equal(getRes.status, 200);
+  } finally {
+    delete process.env.ADMIN_SECRET;
+    server.closeAllConnections();
+    server.close();
+  }
+});

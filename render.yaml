@@ -107,3 +107,5 @@ services:
         sync: false
       - key: DASHBOARD_ORIGIN
         sync: false
+      - key: ADMIN_SECRET
+        sync: false

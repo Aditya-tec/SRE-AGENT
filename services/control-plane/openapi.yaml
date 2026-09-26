@@ -132,7 +132,17 @@ paths:
       summary: >-
         Pause or resume every /break-it trigger. Blocks manual and
         autonomous alike, since /break-it is public and unauthenticated
-        and there is no way to tell them apart server-side.
+        and there is no way to tell them apart server-side. Requires
+        the x-admin-secret header to match ADMIN_SECRET once one is
+        configured — otherwise this control would be exactly as public
+        as the thing it's meant to stop.
+      parameters:
+        - name: x-admin-secret
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Required only if ADMIN_SECRET is configured on control-plane.
       requestBody:
         required: true
         content:
@@ -155,6 +165,8 @@ paths:
                     type: boolean
         '400':
           $ref: '#/components/responses/Error'
+        '401':
+          description: Missing or incorrect x-admin-secret (only when ADMIN_SECRET is configured)
         '500':
           $ref: '#/components/responses/Error'
   /metrics:

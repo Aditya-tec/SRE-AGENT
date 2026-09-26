@@ -53,10 +53,13 @@ export function getAutonomy() {
   return apiFetch('/autonomy');
 }
 
-export function setAutonomyPaused(paused) {
+export function setAutonomyPaused(paused, adminSecret) {
   return apiFetch('/autonomy', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(adminSecret ? { 'x-admin-secret': adminSecret } : {}),
+    },
     body: JSON.stringify({ paused }),
   });
 }
