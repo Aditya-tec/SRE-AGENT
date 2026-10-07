@@ -10,7 +10,7 @@
     "test": "node --test --test-force-exit test/*.test.js"
   },
   "dependencies": {
-    "next": "^16.3.6",
+    "next": "^16.3.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1"
