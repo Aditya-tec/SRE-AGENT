@@ -19,7 +19,7 @@
     "express-rate-limit": "^7.4.0",
     "groq-sdk": "^0.7.0",
     "helmet": "^8.3.0",
-    "pino": "^10.3.1",
+    "pino": "^10.4.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
